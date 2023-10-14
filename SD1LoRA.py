@@ -1,6 +1,7 @@
 # torch.compile()
 
 import os, sys, argparse
+from datetime import datetime
 import time, math
 from pathlib import Path
 from typing import Dict, List, Literal, Optional, Tuple
@@ -29,19 +30,14 @@ from diffusers.models.lora import LoRALinearLayer, LoRACompatibleLinear
 from diffusers.optimization import get_scheduler
 import safetensors
 
-from lib.checkpoint_to_diffusers import checkpoint_to_diffusers
-from lib.preprocessing import image_folder_to_list
-from lib.load_optimizer import load_optimizer
-from datasets.batch1_dataset import get_batch1_dataset
+from libs.custom_dataset import CustomDataset
+from libs.checkpoint_to_diffusers import checkpoint_to_diffusers
+from libs.utils import cache_vae_outputs, image_folder_to_list, captions_to_tokens
+from libs.load_optimizer import load_optimizer
+from libs.bucket_dataset import get_bucket_dataloader
 
 config = None
-
-
-def collate_fn(examples):
-    pixel_values = torch.stack([example["pixel_values"] for example in examples])
-    pixel_values = pixel_values.to(memory_format=torch.contiguous_format)  # .float()
-    input_ids = torch.stack([example["input_ids"] for example in examples])
-    return {"pixel_values": pixel_values, "input_ids": input_ids}
+run_name = ""
 
 
 def set_lora_layer(attn_module_attribute):
@@ -160,23 +156,22 @@ def main(fabric: L.Fabric):
         unet.enable_xformers_memory_efficient_attention()
         print("xformers enabled!")
 
-    # load and preprocess data
-    data = image_folder_to_list(
+    # preprocess
+    data_list = image_folder_to_list(
         config.preprocess.folder_path, **config.preprocess.parameters
     )
-    assert len(data) > 0, "Empty folder or incorrect path"
-    if config.dataset.type == "batch1":
-        dataset = get_batch1_dataset(
-            data, config=config.dataset.parameters, tokenizer=tokenizer
-        )
+    assert len(data_list) > 0, "Empty folder or incorrect path"
+    # Cache VAE latent output
+    if config.preprocess.cache_vae_outputs:
+        data_list = cache_vae_outputs(data_list, vae)
 
-    dataloader = DataLoader(
-        dataset,
-        shuffle=True,
-        drop_last=True,
-        collate_fn=collate_fn,
-        **config.dataloader,
-    )
+    data_list = captions_to_tokens(data_list, tokenizer)
+    # TODO: Cache Text Encoder output
+
+    # Load Dataset
+    dataset = CustomDataset(data_list, **config.dataset)
+    if config.bucket.enable:
+        dataloader = get_bucket_dataloader(dataset, **config.dataloader)
 
     dataloader = fabric.setup_dataloaders(dataloader)
 
@@ -435,9 +430,9 @@ def train(
 
 def save_lora_checkpoint(unet, text_encoder, current_iter=None):
     if current_iter:
-        save_file_name = f"{config.trainer.name}_{current_iter}_{config.trainer.save_every.method}.safetensors"
+        save_file_name = f"{config.name}_{current_iter}_{config.trainer.save_every.method}.safetensors"
     else:
-        save_file_name = f"{config.trainer.name}.safetensors"
+        save_file_name = f"{config.name}.safetensors"
 
     state_dict = {}
 
@@ -451,9 +446,10 @@ def save_lora_checkpoint(unet, text_encoder, current_iter=None):
     elif config.model.lora_te.enable_train:
         state_dict = text_encoder_lora_state_dict(_unwrap_objects(text_encoder))
 
+    os.makedirs(f"runs/{run_name}/output", exist_ok=True)
     safetensors.torch.save_file(
         state_dict,
-        f"./output/{config.trainer.name}/{save_file_name}",
+        f"runs/{run_name}/output/{save_file_name}",
         metadata={"format": "pt"},
     )
 
@@ -467,12 +463,13 @@ def sample_images(
     unet,
     current_iter=None,
 ):
-    if not fabric.is_global_zero:
-        return
+    # if not fabric.is_global_zero:
+    #    return
+    os.makedirs(f"runs/{run_name}/samples", exist_ok=True)
     if current_iter:
-        save_file_name = f"./output/{config.trainer.name}/{config.trainer.name}_{current_iter}_{config.trainer.save_every.method}.png"
+        save_file_name = f"runs/{run_name}/samples/{current_iter}_{config.trainer.save_every.method}.png"
     else:
-        save_file_name = f"./output/{config.trainer.name}/{config.trainer.name}_{current_iter}_{config.trainer.save_every.method}.png"
+        save_file_name = f"runs/{run_name}/samples/final.png"
 
     with torch.inference_mode():
         pipeline = StableDiffusionPipeline(
@@ -495,12 +492,12 @@ def sample_images(
                 else None
             )
             image = pipeline(
-                prompt="A portrait of a girls",
+                prompt="1girl, aqua eyes, baseball cap, blonde hair, closed mouth, earrings, green background, hat, hoop earrings, jewelry, looking at viewer, shirt, short hair, simple background, solo, upper body, yellow shirt",
                 width=512,
                 height=640,
-                negative_prompt="worse quality, bad quality, ugly, simple background",
+                negative_prompt="worse quality, bad quality, ugly, low quality",
                 generator=generator,
-                num_inference_steps=24,
+                num_inference_steps=28,
                 clip_skip=config.model.clip_skip,
             ).images[0]
             image.save(save_file_name)
@@ -517,10 +514,15 @@ if __name__ == "__main__":
             torch.backends.cuda.allow_tf32 = True
             print("TF32 Enabled")
             torch.set_float32_matmul_precision("medium")
-    parser = argparse.ArgumentParser(description='Provide configuration file.')
-    parser.add_argument('--config', default="config.yaml", type=str, help='Path to the configuration YAML file')
+    parser = argparse.ArgumentParser(description="Provide configuration file.")
+    parser.add_argument(
+        "--config",
+        default="config.yaml",
+        type=str,
+        help="Path to the configuration YAML file",
+    )
     args = parser.parse_args()
 
     config = OmegaConf.load(args.config)
-
+    run_name = f"{config.name}_{datetime.now().strftime('%Y_%m_%d_%H_%M_%S')}"
     setup()

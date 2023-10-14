@@ -178,3 +178,4 @@ pyrightconfig.json
 .vscode
 *.pyc
 config.yaml
+runs
