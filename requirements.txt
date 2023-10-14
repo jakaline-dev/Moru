@@ -1,0 +1,10 @@
+torch==2.1.0+cuda121 --f https://download.pytorch.org/whl/cu121
+torchvision==0.16.0+cuda121 --f https://download.pytorch.org/whl/cu121
+# Diffusers Nightly (Currently 0.22.0.dev0, Will pin version at 0.22.0)
+git+https://github.com/huggingface/diffusers
+lightning==2.1.0
+transformers==4.34.0
+omegaconf
+
+bitsandbytes==0.41.1; platform_system != "Windows"
+https://github.com/jllllll/bitsandbytes-windows-webui/releases/download/wheels/bitsandbytes-0.41.1-py3-none-win_amd64.whl; platform_system == "Windows"
