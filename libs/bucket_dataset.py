@@ -19,8 +19,6 @@ class BucketBatchSampler(BatchSampler):
             batches = []
             data_list = self.buckets[key]
             random.shuffle(data_list)
-            if len(data_list) < self.batch_size and self.drop_last:
-                continue
             for d in data_list:
                 batches.append(d)
                 if len(batches) == self.batch_size:
@@ -47,6 +45,7 @@ def get_bucket_dataloader(
     persistent_workers: bool = False,
 ):
     buckets = convert_to_buckets(dataset.data)
+    print(buckets)
     batch_sampler = BucketBatchSampler(
         buckets, batch_size=batch_size, drop_last=drop_last
     )

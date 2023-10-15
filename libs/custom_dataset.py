@@ -22,10 +22,8 @@ class CustomDataset(Dataset):
 
     def __getitem__(self, idx):
         entry = self.data[idx]
-        item = {}
-        if "latent_values" in entry:
-            item["latent_values"] = entry["latent_values"]
-        else:
+        available_keys = ["input_ids"]
+        if "latent_values" not in entry:
             tfs = v2.Compose(
                 [
                     v2.RandomCrop(entry["grid_width"], entry["grid_height"])
@@ -39,18 +37,14 @@ class CustomDataset(Dataset):
                     v2.Normalize([0.5], [0.5]),
                 ]
             )
-            item["pixel_values"] = tfs(entry["image"])
-            item["pixel_values"] = item["pixel_values"].to(
+            entry["pixel_values"] = tfs(entry["image"])
+            entry["pixel_values"] = entry["pixel_values"].to(
                 memory_format=torch.contiguous_format
             )
-        if len(entry["input_ids"].shape) == 1:
-            item["input_ids"] = entry["input_ids"]
-        elif len(entry["input_ids"].shape) > 1:
-            item["input_ids"] = random.choice(entry["input_ids"])
+            available_keys.append("pixel_values")
         else:
-            pass
-        return {
-            key: item[key]
-            for key in ["pixel_values", "input_ids", "latent_values"]
-            if key in item
-        }
+            available_keys.append("latent_values")
+        if len(entry["input_ids"].shape) > 1:
+            entry["input_ids"] = random.choice(entry["input_ids"])
+
+        return {key: entry[key] for key in available_keys if key in entry}

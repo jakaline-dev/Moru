@@ -35,8 +35,12 @@ from libs.checkpoint_to_diffusers import checkpoint_to_diffusers
 from libs.utils import cache_vae_outputs, image_folder_to_list, captions_to_tokens
 from libs.load_optimizer import load_optimizer
 from libs.bucket_dataset import get_bucket_dataloader
+from hydra import initialize, compose
 
 config = None
+
+# config = compose(config_name="config")
+
 run_name = ""
 
 
@@ -163,8 +167,10 @@ def main(fabric: L.Fabric):
     assert len(data_list) > 0, "Empty folder or incorrect path"
     # Cache VAE latent output
     if config.preprocess.cache_vae_outputs:
-        data_list = cache_vae_outputs(data_list, vae)
-
+        print("Caching VAE outputs")
+        with fabric.autocast(), torch.inference_mode():
+            data_list = cache_vae_outputs(data_list, vae, fabric.device)
+        vae.to("cpu")
     data_list = captions_to_tokens(data_list, tokenizer)
     # TODO: Cache Text Encoder output
 
@@ -276,7 +282,6 @@ def train(
     pbar = None
     if fabric.is_global_zero:
         pbar = tqdm(total=total_steps, desc="")
-
     while True:
         current_epoch += 1
         for idx, batch in enumerate(dataloader):
@@ -368,15 +373,15 @@ def train(
                     optimizer_te.zero_grad()
 
             if (
-                config.trainer.save_every.method == "step"
-                and config.trainer.save_every.value > 0
-                and current_step % config.trainer.save_every.value == 0
+                config.trainer.save.every == "step"
+                and config.trainer.save.value > 0
+                and current_step % config.trainer.save.value == 0
             ):
                 save_lora_checkpoint(unet, text_encoder, current_step)
             if (
-                config.trainer.sample_every.method == "step"
-                and config.trainer.sample_every.value > 0
-                and current_step % config.trainer.sample_every.value == 0
+                config.trainer.sample.every == "step"
+                and config.trainer.sample.value > 0
+                and current_step % config.trainer.sample.value == 0
             ):
                 sample_images(
                     fabric,
@@ -399,15 +404,15 @@ def train(
                 lr_scheduler_te.step()
 
         if (
-            config.trainer.save_every.method == "epoch"
-            and config.trainer.save_every.value > 0
-            and current_epoch % config.trainer.save_every.value == 0
+            config.trainer.save.every == "epoch"
+            and config.trainer.save.value > 0
+            and current_epoch % config.trainer.save.value == 0
         ):
             save_lora_checkpoint(unet, text_encoder, current_epoch)
         if (
-            config.trainer.sample_every.method == "epoch"
-            and config.trainer.sample_every.value > 0
-            and current_epoch % config.trainer.sample_every.value == 0
+            config.trainer.sample.every == "epoch"
+            and config.trainer.sample.value > 0
+            and current_epoch % config.trainer.sample.value == 0
         ):
             sample_images(
                 fabric,
@@ -417,7 +422,7 @@ def train(
                 vae,
                 unet,
                 current_step
-                if config.trainer.sample_every.method == "step"
+                if config.trainer.sample.every == "step"
                 else current_epoch,
             )
 
@@ -430,7 +435,9 @@ def train(
 
 def save_lora_checkpoint(unet, text_encoder, current_iter=None):
     if current_iter:
-        save_file_name = f"{config.name}_{current_iter}_{config.trainer.save_every.method}.safetensors"
+        save_file_name = (
+            f"{config.name}_{current_iter}_{config.trainer.save.every}.safetensors"
+        )
     else:
         save_file_name = f"{config.name}.safetensors"
 
@@ -467,10 +474,13 @@ def sample_images(
     #    return
     os.makedirs(f"runs/{run_name}/samples", exist_ok=True)
     if current_iter:
-        save_file_name = f"runs/{run_name}/samples/{current_iter}_{config.trainer.save_every.method}.png"
+        save_file_name = (
+            f"runs/{run_name}/samples/{current_iter}_{config.trainer.save.every}.png"
+        )
     else:
         save_file_name = f"runs/{run_name}/samples/final.png"
-
+    if config.preprocess.cache_vae_outputs:
+        vae.to(fabric.device)
     with torch.inference_mode():
         pipeline = StableDiffusionPipeline(
             tokenizer=tokenizer,
@@ -492,18 +502,20 @@ def sample_images(
                 else None
             )
             image = pipeline(
-                prompt="1girl, aqua eyes, baseball cap, blonde hair, closed mouth, earrings, green background, hat, hoop earrings, jewelry, looking at viewer, shirt, short hair, simple background, solo, upper body, yellow shirt",
-                width=512,
-                height=640,
-                negative_prompt="worse quality, bad quality, ugly, low quality",
+                prompt=config.trainer.sample.pipeline.prompt,
+                negative_prompt=config.trainer.sample.pipeline.negative_prompt,
+                width=config.trainer.sample.pipeline.width,
+                height=config.trainer.sample.pipeline.height,
+                num_inference_steps=config.trainer.sample.pipeline.num_inference_steps,
                 generator=generator,
-                num_inference_steps=28,
                 clip_skip=config.model.clip_skip,
             ).images[0]
             image.save(save_file_name)
             del image
             del pipeline
-        torch.cuda.empty_cache()
+    if config.preprocess.cache_vae_outputs:
+        vae.to("cpu")
+    torch.cuda.empty_cache()
 
 
 if __name__ == "__main__":

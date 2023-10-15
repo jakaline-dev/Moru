@@ -60,4 +60,5 @@ This trainer was built from the shoulders of many giants. Also, just giving a sh
 
 - [Diffusers](https://huggingface.co/docs/diffusers/index)
 - [Kohya Trainer](https://github.com/kohya-ss/sd-scripts)
+- [Lightning Fabric](https://lightning.ai)
 - And [Stability AI](https://github.com/Stability-AI/generative-models)

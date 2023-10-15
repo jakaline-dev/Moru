@@ -123,18 +123,21 @@ def convert_to_buckets(data_list):
     return bucket
 
 
-def cache_vae_outputs(data_list, vae):
-    simple_transforms = v2.Compose(
-        [
-            v2.ToImage(),
-            v2.ToDtype(torch.get_default_dtype(), scale=True),
-            v2.Normalize([0.5], [0.5]),
-        ]
-    )
+def cache_vae_outputs(data_list, vae, device):
     for entry in data_list:
-        pixel_values = simple_transforms(entry["image"]).unsqueeze(dim=0)
-        latent_dist = vae.encode(pixel_values).latent_dist
+        tfs = v2.Compose(
+            [
+                v2.CenterCrop((entry["grid_width"], entry["grid_height"])),
+                v2.ToImage(),
+                v2.ToDtype(torch.get_default_dtype(), scale=True),
+                v2.Normalize([0.5], [0.5]),
+            ]
+        )
+        pixel_values = tfs(entry["image"]).unsqueeze(dim=0)
+        latent_dist = vae.encode(pixel_values.to(device)).latent_dist
         entry["latent_values"] = latent_dist.parameters
+        entry["latent_values"] = entry["latent_values"].squeeze(dim=0).to("cpu")
+    torch.cuda.empty_cache()
     return data_list
 
 

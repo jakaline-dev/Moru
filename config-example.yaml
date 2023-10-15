@@ -22,13 +22,19 @@ trainer:
   max_train:
     method: "epoch"
     value: 10
-  save_every:
-    method: "epoch"
-    value: 0
-  sample_every:
-    method: "epoch"
-    value: 0
+  save:
+    every: "epoch"
+    value: 1
+  sample:
+    every: "epoch"
+    value: 1
     num_images: 0 # WIP
+    pipeline:
+      prompt: 1girl, smile
+      negative_prompt: worse quality, bad quality, ugly, low quality
+      width: 512
+      height: 640
+      num_inference_steps: 28
 
 model:
   type: ${base.type}_${type}
