@@ -1,8 +1,8 @@
-seed: 42
+seed: 424242
 name: # Name of the training LoRA
 type: LoRA
-base:
-  checkpoint_path: # Your base checkpoint
+pretrained_model:
+  checkpoint_path: # Name of the training LoRA
   type: SD1
   clip_skip: 2
 
@@ -10,46 +10,46 @@ trainer:
   accelerator: auto
   strategy: auto
   devices: auto
-  # bf16-mixed: mixed precision training (bf16 <> fp32)
-  # bf16-true: full bf16 training
+  # bf16_mixed: mixed precision training (bf16 <> fp32)
+  # bf16_true: full bf16 training
   # Only use those two options
   # If your GPU is not above NVIDIA Ampere, cry or get a runpod instance
-  precision: bf16-true
+  precision: bf16_true
   batch_size: 1
   grad_accum_steps: 1
   # Pytorch 2.1 default attention is faster than xformers in windows (Could change with implementation of Flash Attention 2)
   use_xformers: false
   max_train:
-    method: "epoch"
-    value: 10
+    method: "step"
+    value: 3000
   save:
-    every: "epoch"
-    value: 1
+    every: "step"
+    value: 500
   sample:
-    every: "epoch"
-    value: 1
+    every: "step"
+    value: 100
     num_images: 0 # WIP
     pipeline:
-      prompt: 1girl, smile
+      prompt: 1girl, smile # write your prompt for sampling
       negative_prompt: worse quality, bad quality, ugly, low quality
       width: 512
-      height: 640
+      height: 768
       num_inference_steps: 28
 
 model:
-  type: ${base.type}_${type}
-  clip_skip: ${base.clip_skip}
+  type: ${pretrained_model.type}_${type}
+  clip_skip: ${pretrained_model.clip_skip}
   noise_offset: 0.05
   snr_gamma: 5
   lora_unet:
     enable_train: true
     rank: 16
-    network_alpha: 8
+    network_alpha: 16
     optimizer:
       # AdamW8bit: bitsandbytes optimizer is supported, but is not that useful for LoRA training in SD1
       name: AdamW
       init_args:
-        lr: 0.0005
+        lr: 0.0001
     lr_scheduler:
       name: cosine_with_restarts
       init_args:
@@ -58,7 +58,7 @@ model:
   lora_te:
     enable_train: true
     rank: 16
-    network_alpha: 8
+    network_alpha: 16
     optimizer:
       name: AdamW
       init_args:
@@ -70,11 +70,11 @@ model:
         num_warmup_steps: 100
 
 preprocess:
-  folder_path: # Your dataset folder path, which contains training images and captions(.txt) file with the same filename as the image.
-  parameters:
-    max_chunk: 96 # 1 chunk = 64 x 64, 64 chunk = 512 x 512, 256 chunk = 1024 x 1024
-    min_chunk: 32
-  cache_vae_outputs: false
+  # Your dataset folder path, which contains training images and captions(.txt) file with the same filename as the image.
+  folder_path:
+  max_chunk: 64 # 1 chunk = 64 x 64, 64 chunk = 512 x 512, 256 chunk = 1024 x 1024
+  min_chunk: 32
+  cache_vae_outputs: true
   cache_te_outputs: false # WIP
 
 bucket:

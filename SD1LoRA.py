@@ -32,80 +32,75 @@ import safetensors
 
 from libs.custom_dataset import CustomDataset
 from libs.checkpoint_to_diffusers import checkpoint_to_diffusers
-from libs.utils import cache_vae_outputs, image_folder_to_list, captions_to_tokens
+from libs.utils import (
+    cache_vae_outputs,
+    image_folder_to_list,
+    captions_to_tokens,
+    replace_module,
+)
 from libs.load_optimizer import load_optimizer
 from libs.bucket_dataset import get_bucket_dataloader
-from hydra import initialize, compose
+from omegaconf import OmegaConf
+from MyConfig import MyConfig
 
-config = None
-
-# config = compose(config_name="config")
-
+config = OmegaConf.structured(MyConfig)
 run_name = ""
 
 
-def set_lora_layer(attn_module_attribute):
+def set_unet_lora_linear_layer(attn_module_attribute, rank, network_alpha):
     attn_module_attribute.set_lora_layer(
         LoRALinearLayer(
             in_features=attn_module_attribute.in_features,
             out_features=attn_module_attribute.out_features,
-            rank=config.model.lora_unet.rank,
-            network_alpha=config.model.lora_unet.network_alpha,
+            rank=rank,
+            network_alpha=network_alpha,
         )
     )
 
 
-def replace_module(model, name, new_module):
-    name_parts = name.split(".")
-    sub_model = model
-    for part in name_parts[:-1]:
-        sub_model = getattr(sub_model, part)
-    setattr(sub_model, name_parts[-1], new_module)
-
-
-def create_patched_linear_lora(model):
+def set_te_lora_linear_layer(model, rank, network_alpha):
     model = PatchedLoraProjection(
         model,
-        network_alpha=config.model.lora_te.network_alpha,
-        rank=config.model.lora_te.rank,
+        rank=rank,
+        network_alpha=network_alpha,
     )
     return model
 
 
-def unet_lora_state_dict(unet):
+def unet_lora_state_dict(unet, alpha):
     lora_state_dict = {}
 
     for name, module in unet.named_modules():
-        if hasattr(module, "set_lora_layer"):
+        if hasattr(module, "lora_layer"):
             lora_layer = getattr(module, "lora_layer")
-            if lora_layer is not None:
-                current_lora_layer_sd = lora_layer.state_dict()
+        else:
+            continue
+
+        if lora_layer is not None:
+            current_lora_layer_sd = lora_layer.state_dict()
+            lora_state_dict[f"lora_unet_{name.replace('.', '_')}.alpha"] = torch.tensor(
+                alpha, dtype=unet.dtype
+            )
+            for lora_layer_matrix_name, lora_param in current_lora_layer_sd.items():
                 lora_state_dict[
-                    f"lora_unet_{name.replace('.', '_')}.alpha"
-                ] = torch.tensor(config.model.lora_unet.network_alpha, dtype=unet.dtype)
-                for lora_layer_matrix_name, lora_param in current_lora_layer_sd.items():
-                    lora_state_dict[
-                        f"lora_unet_{name.replace('.', '_')}.lora_{lora_layer_matrix_name}"
-                    ] = lora_param
+                    f"lora_unet_{name.replace('.', '_')}.lora_{lora_layer_matrix_name}"
+                ] = lora_param
 
     return lora_state_dict
 
 
-def text_encoder_lora_state_dict(text_encoder):
+def text_encoder_lora_state_dict(text_encoder, alpha):
     lora_state_dict = {}
 
     for name, module in text_encoder.named_modules():
         if hasattr(module, "lora_linear_layer"):
-            lora_layer = module.lora_linear_layer
+            lora_layer = getattr(module, "lora_linear_layer")
             if lora_layer is not None:
                 current_lora_layer_sd = lora_layer.state_dict()
                 lora_state_dict[
                     f"lora_te_{name.replace('.', '_')}.alpha"
-                ] = torch.tensor(
-                    config.model.lora_te.network_alpha, dtype=text_encoder.dtype
-                )
+                ] = torch.tensor(alpha, dtype=text_encoder.dtype)
                 for lora_layer_matrix_name, lora_param in current_lora_layer_sd.items():
-                    # The matrix name can either be "down" or "up".
                     lora_state_dict[
                         f"lora_te_{name.replace('.', '_')}.lora_{lora_layer_matrix_name}"
                     ] = lora_param
@@ -113,6 +108,8 @@ def text_encoder_lora_state_dict(text_encoder):
 
 
 def setup():
+    global run_name
+    run_name = f"{datetime.now().strftime('%Y_%m_%d_%H_%M_%S')}_{config.name}"
     # plugins = None
     # if quantize is not None and quantize.startswith("bnb."):
     #     if "mixed" in precision:
@@ -132,12 +129,11 @@ def setup():
         # callbacks=None,
         # loggers=None,
     )
-    fabric.launch(main)
+    fabric.launch(main, config)
 
 
-def main(fabric: L.Fabric):
-    if "seed" in config:
-        fabric.seed_everything(config["seed"])
+def main(fabric: L.Fabric, config):
+    fabric.seed_everything(config["seed"])
 
     with fabric.init_module():  # empty_init=(devices > 1)
         (
@@ -147,8 +143,8 @@ def main(fabric: L.Fabric):
             unet,
             noise_scheduler,
         ) = checkpoint_to_diffusers(
-            config["base"]["checkpoint_path"],
-            type=config["base"]["type"],
+            config.pretrained_model.checkpoint_path,
+            type=config.pretrained_model.type,
             return_vae=True,
         )
     unet.requires_grad_(False)
@@ -162,13 +158,15 @@ def main(fabric: L.Fabric):
 
     # preprocess
     data_list = image_folder_to_list(
-        config.preprocess.folder_path, **config.preprocess.parameters
+        config.preprocess.folder_path,
+        max_chunk=config.preprocess.max_chunk,
+        min_chunk=config.preprocess.min_chunk,
     )
     assert len(data_list) > 0, "Empty folder or incorrect path"
     # Cache VAE latent output
     if config.preprocess.cache_vae_outputs:
         print("Caching VAE outputs")
-        with fabric.autocast(), torch.inference_mode():
+        with fabric.autocast():
             data_list = cache_vae_outputs(data_list, vae, fabric.device)
         vae.to("cpu")
     data_list = captions_to_tokens(data_list, tokenizer)
@@ -178,6 +176,9 @@ def main(fabric: L.Fabric):
     dataset = CustomDataset(data_list, **config.dataset)
     if config.bucket.enable:
         dataloader = get_bucket_dataloader(dataset, **config.dataloader)
+        fabric.print(
+            {key: len(value) for key, value in dataloader.batch_sampler.buckets.items()}
+        )
 
     dataloader = fabric.setup_dataloaders(dataloader)
 
@@ -188,16 +189,45 @@ def main(fabric: L.Fabric):
             math.ceil(len(dataloader) / config.trainer.grad_accum_steps)
             * config.trainer.max_train.value
         )
+    else:
+        raise Exception("max_train.method is either 'step' or 'epoch'")
 
     lora_unet_params = []
     lora_te_params = []
 
     if config.model.lora_unet.enable_train:
-        for name, module in unet.named_modules():
-            if isinstance(module, LoRACompatibleLinear) and "attention" in name:
-                set_lora_layer(module)
-                lora_unet_params.extend(module.lora_layer.parameters())
+        trainable_unet_layers = []
 
+        for name, module in unet.named_modules():
+            # if isinstance(module, LoRACompatibleLinear):
+            if not list(module.children()) and any(
+                [
+                    x in name
+                    for x in [
+                        "to_q",
+                        "to_k",
+                        "to_v",
+                        "to_out.0",
+                        "ff.net.0.proj",
+                        "ff.net.2",
+                    ]
+                ]
+            ):
+                trainable_unet_layers.append(name)
+
+        for name in trainable_unet_layers:
+            # Navigate the nested structure to get to the module
+            module = unet
+            for attr in name.split("."):
+                module = getattr(module, attr)
+            # print(name)
+            if isinstance(module, LoRACompatibleLinear):
+                set_unet_lora_linear_layer(
+                    module,
+                    rank=config.model.lora_unet.rank,
+                    network_alpha=config.model.lora_unet.network_alpha,
+                )
+            lora_unet_params.extend(module.lora_layer.parameters())
         optimizer_unet = load_optimizer(config.model.lora_unet.optimizer.name)(
             lora_unet_params, **config.model.lora_unet.optimizer.init_args
         )
@@ -214,11 +244,35 @@ def main(fabric: L.Fabric):
         lr_scheduler_unet = None
 
     if config.model.lora_te.enable_train:
+        trainable_te_layers = []
         for name, module in text_encoder.named_modules():
-            if isinstance(module, torch.nn.modules.linear.Linear):
-                new_module = create_patched_linear_lora(module)
-                replace_module(text_encoder, name, new_module)
-                lora_te_params.extend(new_module.lora_linear_layer.parameters())
+            if not list(module.children()) and any(
+                [
+                    x in name
+                    for x in [
+                        "q_proj",
+                        "k_proj",
+                        "v_proj",
+                        "out_proj",
+                        "fc1",
+                        "fc2",
+                    ]
+                ]
+            ):
+                trainable_te_layers.append(name)
+        for name in trainable_te_layers:
+            # if isinstance(module, torch.nn.modules.linear.Linear):
+            module = text_encoder
+            for attr in name.split("."):
+                module = getattr(module, attr)
+            # print(name)
+            new_module = set_te_lora_linear_layer(
+                module,
+                rank=config.model.lora_te.rank,
+                network_alpha=config.model.lora_te.network_alpha,
+            )
+            replace_module(text_encoder, name, new_module)
+            lora_te_params.extend(new_module.lora_linear_layer.parameters())
 
         optimizer_te = load_optimizer(config.model.lora_te.optimizer.name)(
             lora_te_params, **config.model.lora_te.optimizer.init_args
@@ -244,6 +298,7 @@ def main(fabric: L.Fabric):
 
     train_time = time.perf_counter()
     train(
+        config,
         fabric,
         dataloader,
         total_steps,
@@ -260,10 +315,11 @@ def main(fabric: L.Fabric):
     fabric.print(f"Training time: {(time.perf_counter()-train_time):.2f}s")
     if fabric.device.type == "cuda":
         fabric.print(f"Memory used: {torch.cuda.max_memory_allocated() / 1e9:.02f} GB")
-    save_lora_checkpoint(unet, text_encoder)
+    save_lora_checkpoint(config, unet, text_encoder)
 
 
 def train(
+    config,
     fabric: L.Fabric,
     dataloader: DataLoader,
     total_steps: int,
@@ -284,6 +340,7 @@ def train(
         pbar = tqdm(total=total_steps, desc="")
     while True:
         current_epoch += 1
+        pbar.set_description(f"Epoch {current_epoch}")
         for idx, batch in enumerate(dataloader):
             current_step += 1
             is_accumulating = (idx + 1) % config.trainer.grad_accum_steps != 0
@@ -326,7 +383,7 @@ def train(
                 )
 
                 encoder_hidden_states = text_encoder.text_model.final_layer_norm(
-                    encoder_outputs.hidden_states[-config.base.clip_skip].to(
+                    encoder_outputs.hidden_states[-config.model.clip_skip].to(
                         dtype=latents.dtype
                     )
                 )
@@ -336,14 +393,14 @@ def train(
                 ).sample
                 # del noisy_latents
                 # del encoder_hidden_states
-                if config.model.snr_gamma is None:
+                if not config.model.snr_gamma:
                     loss = F.mse_loss(model_pred, noise, reduction="mean")
-                    # loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
                 else:
                     # Compute loss-weights as per Section 3.4 of https://arxiv.org/abs/2303.09556.
                     # Since we predict the noise instead of x_0, the original formulation is slightly changed.
                     # This is discussed in Section 4.2 of the same paper.
                     snr = compute_snr(noise_scheduler, timesteps)
+                    # print(snr.item(), timesteps.item())
                     mse_loss_weights = (
                         torch.stack(
                             [
@@ -363,6 +420,7 @@ def train(
 
             if pbar is not None:
                 pbar.update(1)
+                # pbar.set_postfix(loss = loss.item())
             fabric.backward(loss / config.trainer.grad_accum_steps)
             if not is_accumulating:
                 if optimizer_unet:
@@ -377,13 +435,14 @@ def train(
                 and config.trainer.save.value > 0
                 and current_step % config.trainer.save.value == 0
             ):
-                save_lora_checkpoint(unet, text_encoder, current_step)
+                save_lora_checkpoint(config, unet, text_encoder, current_step)
             if (
                 config.trainer.sample.every == "step"
                 and config.trainer.sample.value > 0
                 and current_step % config.trainer.sample.value == 0
             ):
                 sample_images(
+                    config,
                     fabric,
                     tokenizer,
                     noise_scheduler,
@@ -408,13 +467,14 @@ def train(
             and config.trainer.save.value > 0
             and current_epoch % config.trainer.save.value == 0
         ):
-            save_lora_checkpoint(unet, text_encoder, current_epoch)
+            save_lora_checkpoint(config, unet, text_encoder, current_epoch)
         if (
             config.trainer.sample.every == "epoch"
             and config.trainer.sample.value > 0
             and current_epoch % config.trainer.sample.value == 0
         ):
             sample_images(
+                config,
                 fabric,
                 tokenizer,
                 noise_scheduler,
@@ -433,7 +493,7 @@ def train(
             return
 
 
-def save_lora_checkpoint(unet, text_encoder, current_iter=None):
+def save_lora_checkpoint(config, unet, text_encoder, current_iter=None):
     if current_iter:
         save_file_name = (
             f"{config.name}_{current_iter}_{config.trainer.save.every}.safetensors"
@@ -442,16 +502,18 @@ def save_lora_checkpoint(unet, text_encoder, current_iter=None):
         save_file_name = f"{config.name}.safetensors"
 
     state_dict = {}
-
-    if config.model.lora_unet.enable_train and config.model.lora_te.enable_train:
-        state_dict = {
-            **unet_lora_state_dict(_unwrap_objects(unet)),
-            **text_encoder_lora_state_dict(_unwrap_objects(text_encoder)),
-        }
-    elif config.model.lora_unet.enable_train:
-        state_dict = unet_lora_state_dict(_unwrap_objects(unet))
-    elif config.model.lora_te.enable_train:
-        state_dict = text_encoder_lora_state_dict(_unwrap_objects(text_encoder))
+    if config.model.lora_unet.enable_train:
+        state_dict.update(
+            unet_lora_state_dict(
+                _unwrap_objects(unet), alpha=config.model.lora_unet.network_alpha
+            )
+        )
+    if config.model.lora_te.enable_train:
+        state_dict.update(
+            text_encoder_lora_state_dict(
+                _unwrap_objects(text_encoder), alpha=config.model.lora_te.network_alpha
+            )
+        )
 
     os.makedirs(f"runs/{run_name}/output", exist_ok=True)
     safetensors.torch.save_file(
@@ -461,7 +523,9 @@ def save_lora_checkpoint(unet, text_encoder, current_iter=None):
     )
 
 
+@torch.inference_mode()
 def sample_images(
+    config,
     fabric: L.Fabric,
     tokenizer,
     noise_scheduler,
@@ -481,41 +545,40 @@ def sample_images(
         save_file_name = f"runs/{run_name}/samples/final.png"
     if config.preprocess.cache_vae_outputs:
         vae.to(fabric.device)
-    with torch.inference_mode():
-        pipeline = StableDiffusionPipeline(
-            tokenizer=tokenizer,
-            scheduler=EulerDiscreteScheduler.from_config(noise_scheduler.config),
-            text_encoder=_unwrap_objects(text_encoder),
-            unet=_unwrap_objects(unet),
-            vae=vae,
-            # torch_dtype=vae.dtype,
-            feature_extractor=None,
-            safety_checker=None,
-            requires_safety_checker=False,
+    pipeline = StableDiffusionPipeline(
+        tokenizer=tokenizer,
+        scheduler=EulerDiscreteScheduler.from_config(noise_scheduler.config),
+        text_encoder=_unwrap_objects(text_encoder),
+        unet=_unwrap_objects(unet),
+        vae=vae,
+        # torch_dtype=vae.dtype,
+        feature_extractor=None,
+        safety_checker=None,
+        requires_safety_checker=False,
+    )
+    # pipeline = pipeline.to(fabric.device)
+    pipeline.set_progress_bar_config(disable=True)
+    with isolate_rng():
+        generator = (
+            torch.Generator(device=fabric.device).manual_seed(config.seed)
+            if config.seed
+            else None
         )
-        # pipeline = pipeline.to(fabric.device)
-        pipeline.set_progress_bar_config(disable=True)
-        with isolate_rng():
-            generator = (
-                torch.Generator(device=fabric.device).manual_seed(config.seed)
-                if config.seed
-                else None
-            )
-            image = pipeline(
-                prompt=config.trainer.sample.pipeline.prompt,
-                negative_prompt=config.trainer.sample.pipeline.negative_prompt,
-                width=config.trainer.sample.pipeline.width,
-                height=config.trainer.sample.pipeline.height,
-                num_inference_steps=config.trainer.sample.pipeline.num_inference_steps,
-                generator=generator,
-                clip_skip=config.model.clip_skip,
-            ).images[0]
-            image.save(save_file_name)
-            del image
-            del pipeline
+        image = pipeline(
+            prompt=config.trainer.sample.pipeline.prompt,
+            negative_prompt=config.trainer.sample.pipeline.negative_prompt,
+            width=config.trainer.sample.pipeline.width,
+            height=config.trainer.sample.pipeline.height,
+            num_inference_steps=config.trainer.sample.pipeline.num_inference_steps,
+            generator=generator,
+            clip_skip=config.model.clip_skip,
+        ).images[0]
+        image.save(save_file_name)
+        del image
+        del pipeline
     if config.preprocess.cache_vae_outputs:
         vae.to("cpu")
-    torch.cuda.empty_cache()
+    # torch.cuda.empty_cache()
 
 
 if __name__ == "__main__":
@@ -535,6 +598,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    config = OmegaConf.load(args.config)
-    run_name = f"{config.name}_{datetime.now().strftime('%Y_%m_%d_%H_%M_%S')}"
+    yaml_config = OmegaConf.load(args.config)
+    config = OmegaConf.merge(config, yaml_config)
+
     setup()

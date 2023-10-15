@@ -45,7 +45,7 @@ def get_bucket_dataloader(
     persistent_workers: bool = False,
 ):
     buckets = convert_to_buckets(dataset.data)
-    print(buckets)
+    # print({key: len(value) for key, value in buckets.items()})
     batch_sampler = BucketBatchSampler(
         buckets, batch_size=batch_size, drop_last=drop_last
     )

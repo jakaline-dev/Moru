@@ -5,6 +5,7 @@ import torch
 from torchvision.transforms import v2
 from collections import defaultdict
 from transformers import CLIPTokenizer
+from tqdm.auto import tqdm
 
 
 def image_folder_to_list(img_folder, max_chunk=256, min_chunk=32):
@@ -78,8 +79,8 @@ def preprocess_image(image, max_chunk=256, min_chunk=32):
         width, height = image.size
 
     # Find the nearest smaller multiples of 64 for each dimension
-    grid_width = (width // 64) * 64
-    grid_height = (height // 64) * 64
+    grid_width = round(width / 64) * 64
+    grid_height = round(height / 64) * 64
 
     # Determine which dimension is closer to its nearest smaller multiple of 64
     if abs(width - grid_width) < abs(height - grid_height):
@@ -123,8 +124,9 @@ def convert_to_buckets(data_list):
     return bucket
 
 
+@torch.inference_mode()
 def cache_vae_outputs(data_list, vae, device):
-    for entry in data_list:
+    for entry in tqdm(data_list):
         tfs = v2.Compose(
             [
                 v2.CenterCrop((entry["grid_width"], entry["grid_height"])),
@@ -141,14 +143,22 @@ def cache_vae_outputs(data_list, vae, device):
     return data_list
 
 
+def replace_module(model, name, new_module):
+    name_parts = name.split(".")
+    sub_model = model
+    for part in name_parts[:-1]:
+        sub_model = getattr(sub_model, part)
+    setattr(sub_model, name_parts[-1], new_module)
+
+
 # LEGACY BELOW
 
 
-def default_collate_fn(examples):
-    pixel_values = torch.stack([example["pixel_values"] for example in examples])
-    pixel_values = pixel_values.to(memory_format=torch.contiguous_format)  # .float()
-    input_ids = torch.stack([example["input_ids"] for example in examples])
-    return {"pixel_values": pixel_values, "input_ids": input_ids}
+# def default_collate_fn(examples):
+#     pixel_values = torch.stack([example["pixel_values"] for example in examples])
+#     pixel_values = pixel_values.to(memory_format=torch.contiguous_format)  # .float()
+#     input_ids = torch.stack([example["input_ids"] for example in examples])
+#     return {"pixel_values": pixel_values, "input_ids": input_ids}
 
 
 # def crop_dataset(dataset, crop_width, crop_height):

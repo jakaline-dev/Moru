@@ -1,5 +1,3 @@
-torch==2.1.0+cuda121 --f https://download.pytorch.org/whl/cu121
-torchvision==0.16.0+cuda121 --f https://download.pytorch.org/whl/cu121
 # Diffusers Nightly (Currently 0.22.0.dev0, Will pin version at 0.22.0)
 git+https://github.com/huggingface/diffusers
 lightning==2.1.0
