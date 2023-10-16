@@ -3,8 +3,6 @@
 import os, sys, argparse
 from datetime import datetime
 import time, math
-from pathlib import Path
-from typing import Dict, List, Literal, Optional, Tuple
 from omegaconf import OmegaConf
 import torch
 import torch.nn.functional as F
@@ -42,6 +40,7 @@ from libs.load_optimizer import load_optimizer
 from libs.bucket_dataset import get_bucket_dataloader
 from omegaconf import OmegaConf
 from MyConfig import MyConfig
+from peft import LoraConfig, get_peft_model
 
 config = OmegaConf.structured(MyConfig)
 run_name = ""
@@ -194,7 +193,15 @@ def main(fabric: L.Fabric, config):
 
     lora_unet_params = []
     lora_te_params = []
-
+    # config = LoraConfig(
+    #     r=16,
+    #     lora_alpha=16,
+    #     target_modules=["to_q", "to_v"],
+    #     lora_dropout=0.1,
+    #     bias="none",
+    # )
+    # lora_model = get_peft_model(unet, config)
+    # print(lora_model)
     if config.model.lora_unet.enable_train:
         trainable_unet_layers = []
 
@@ -481,9 +488,7 @@ def train(
                 text_encoder,
                 vae,
                 unet,
-                current_step
-                if config.trainer.sample.every == "step"
-                else current_epoch,
+                current_epoch,
             )
 
         if (

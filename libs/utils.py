@@ -21,17 +21,11 @@ def image_folder_to_list(img_folder, max_chunk=256, min_chunk=32):
         ]:
             continue
         try:
-            image = Image.open(image_path)
-            width, height = image.size
-            num_chunks = (width * height) // (64 * 64)
 
-            # If the image is smaller than 32 chunks, skip it
-            if num_chunks < min_chunk:
-                print(f"Skipping '{image_path}', too small")
-        except:
+            image, (grid_width, grid_height) = preprocess_image(image_path, max_chunk, min_chunk)
+        except Exception as e:
+            print(e)
             continue
-        image, (grid_width, grid_height) = preprocess_image(image, max_chunk, min_chunk)
-
         caption_path = Path(folder_path, image_path.stem + ".txt")
         if caption_path.is_file():
             with caption_path.open("r") as f:
@@ -55,40 +49,56 @@ def image_folder_to_list(img_folder, max_chunk=256, min_chunk=32):
     return dataset
 
 
-def preprocess_image(image, max_chunk=256, min_chunk=32):
-    # resize
+def preprocess_image(image_path, max_chunk=256, min_chunk=32):
+    image = Image.open(image_path)
     width, height = image.size
     num_chunks = (width * height) // (64 * 64)
-
+    # If the image is smaller than 32 chunks, skip it
+    if num_chunks < min_chunk:
+        raise Exception(f"Skipping '{image_path}', too small")
     # If the image is larger than 96 chunks, resize it
     if num_chunks > max_chunk:
-        # Calculate the ratio to scale down the image
         ratio = (
             max_chunk / num_chunks
-        ) ** 0.5  # Square root because we're dealing with area
+        ) ** 0.5
 
-        # Calculate new dimensions
         new_width = int(width * ratio)
         new_height = int(height * ratio)
 
         new_width = math.ceil(new_width / 64) * 64
         new_height = int(new_width * (height / width))
 
-        # Resize the image
         image = image.resize((new_width, new_height), Image.Resampling.BICUBIC)
         width, height = image.size
 
-    # Find the nearest smaller multiples of 64 for each dimension
-    grid_width = round(width / 64) * 64
-    grid_height = round(height / 64) * 64
+    # grid time
+    # width = 64 * m + a
+    # height = 64 * n + b
+    m : int = width // 64
+    a : int = width % 64
+    n : int = height // 64
+    b : int = height % 64
 
-    # Determine which dimension is closer to its nearest smaller multiple of 64
-    if abs(width - grid_width) < abs(height - grid_height):
-        new_width = grid_width
-        new_height = int(new_width * (height / width))
-    else:
-        new_height = grid_height
-        new_width = int(new_height * (width / height))
+    if a >= b and a + b <= 64:
+        new_height = 64 * n
+        new_width = (64 * m + a) // (64 * n + b)
+        grid_width = 64 * m
+        grid_height = 64 * n
+    elif a < b and a + b <= 64:
+        new_width = 64 * m
+        new_height = (64 * n + b) // (64 * m + a)
+        grid_width = 64 * m
+        grid_height = 64 * n
+    elif a >= b and a + b > 64:
+        new_width = 64 * (m + 1)
+        new_height = (64 * n + b) * (64 * (m + 1)) // (64 * m + a)
+        grid_width = 64 * (m + 1)
+        grid_height = 64 * n
+    elif a < b and a + b <= 64:
+        new_height = 64 * (n + 1)
+        new_width = (64 * m + a) * (64 * (n + 1)) // (64 * n + b)
+        grid_width = 64 * m
+        grid_height = 64 * (n + 1)
     image = image.resize((new_width, new_height), Image.Resampling.BICUBIC)
 
     if image.mode == "RGBA":
@@ -149,41 +159,3 @@ def replace_module(model, name, new_module):
     for part in name_parts[:-1]:
         sub_model = getattr(sub_model, part)
     setattr(sub_model, name_parts[-1], new_module)
-
-
-# LEGACY BELOW
-
-
-# def default_collate_fn(examples):
-#     pixel_values = torch.stack([example["pixel_values"] for example in examples])
-#     pixel_values = pixel_values.to(memory_format=torch.contiguous_format)  # .float()
-#     input_ids = torch.stack([example["input_ids"] for example in examples])
-#     return {"pixel_values": pixel_values, "input_ids": input_ids}
-
-
-# def crop_dataset(dataset, crop_width, crop_height):
-#     tfs = transforms.CenterCrop((crop_width, crop_height))
-#     for entry in dataset:
-#         img_width, img_height = entry["image"].size
-#         aspect_ratio = img_width / img_height
-
-#         if crop_width == crop_height:
-#             if img_width < img_height:
-#                 new_width = crop_width
-#                 new_height = int(new_width / aspect_ratio)
-#             else:
-#                 new_height = crop_height
-#                 new_width = int(new_height * aspect_ratio)
-#         else:
-#             target_aspect_ratio = crop_width / crop_height
-
-#             if aspect_ratio < target_aspect_ratio:
-#                 new_width = crop_width
-#                 new_height = int(new_width / aspect_ratio)
-#             else:
-#                 new_height = crop_height
-#                 new_width = int(new_height * aspect_ratio)
-
-#         entry["image"] = entry["image"].resize((new_width, new_height))
-#         entry["image"] = tfs(entry["image"])
-#     return dataset

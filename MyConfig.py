@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Dict, Union
+from typing import Dict, Union, Optional
 from functools import partial
 from omegaconf import MISSING
 from enum import StrEnum
@@ -25,6 +25,7 @@ class PrecisionType(StrEnum):
 class StepOrEpoch(StrEnum):
     step = "step"
     epoch = "epoch"
+    skip = "skip"
 
 
 @dataclass
@@ -42,7 +43,7 @@ class MaxTrainConfig:
 
 @dataclass
 class SaveConfig:
-    every: StepOrEpoch | None = "epoch"
+    every: StepOrEpoch = "epoch"
     value: int = 1
 
 
@@ -57,7 +58,7 @@ class SamplePipelineConfig:
 
 @dataclass
 class SampleConfig:
-    every: StepOrEpoch | None = "epoch"
+    every: StepOrEpoch = "epoch"
     value: int = 1
     num_images: int = 1
     pipeline: SamplePipelineConfig = field(default_factory=SamplePipelineConfig)
