@@ -21,8 +21,9 @@ def image_folder_to_list(img_folder, max_chunk=256, min_chunk=32):
         ]:
             continue
         try:
-
-            image, (grid_width, grid_height) = preprocess_image(image_path, max_chunk, min_chunk)
+            image, (grid_width, grid_height) = preprocess_image(
+                image_path, max_chunk, min_chunk
+            )
         except Exception as e:
             print(e)
             continue
@@ -58,9 +59,7 @@ def preprocess_image(image_path, max_chunk=256, min_chunk=32):
         raise Exception(f"Skipping '{image_path}', too small")
     # If the image is larger than 96 chunks, resize it
     if num_chunks > max_chunk:
-        ratio = (
-            max_chunk / num_chunks
-        ) ** 0.5
+        ratio = (max_chunk / num_chunks) ** 0.5
 
         new_width = int(width * ratio)
         new_height = int(height * ratio)
@@ -74,10 +73,10 @@ def preprocess_image(image_path, max_chunk=256, min_chunk=32):
     # grid time
     # width = 64 * m + a
     # height = 64 * n + b
-    m : int = width // 64
-    a : int = width % 64
-    n : int = height // 64
-    b : int = height % 64
+    m: int = width // 64
+    a: int = width % 64
+    n: int = height // 64
+    b: int = height % 64
 
     if a >= b and a + b <= 64:
         new_height = 64 * n
@@ -94,7 +93,7 @@ def preprocess_image(image_path, max_chunk=256, min_chunk=32):
         new_height = (64 * n + b) * (64 * (m + 1)) // (64 * m + a)
         grid_width = 64 * (m + 1)
         grid_height = 64 * n
-    elif a < b and a + b <= 64:
+    elif a < b and a + b > 64:
         new_height = 64 * (n + 1)
         new_width = (64 * m + a) * (64 * (n + 1)) // (64 * n + b)
         grid_width = 64 * m
