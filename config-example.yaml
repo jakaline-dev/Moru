@@ -1,93 +1,69 @@
-seed: 424242
-name: # Name of the training LoRA
+seed: 42
+name: #
 type: LoRA
 pretrained_model:
-  checkpoint_path: # Name of the training LoRA
-  type: SD1
+  checkpoint_path: #
+  architecture: SD1
   clip_skip: 2
-
+fabric:
+  precision: bf16-true
 trainer:
-  accelerator: auto
-  strategy: auto
-  devices: auto
-  # bf16_mixed: mixed precision training (bf16 <> fp32)
-  # bf16_true: full bf16 training
-  # Only use those two options
-  # If your GPU is not above NVIDIA Ampere, cry or get a runpod instance
-  precision: bf16_true
   batch_size: 1
   grad_accum_steps: 1
-  # Pytorch 2.1 default attention is faster than xformers in windows (Could change with implementation of Flash Attention 2)
   use_xformers: false
-  max_train:
-    method: "step"
-    value: 3000
-  save:
-    every: "step"
-    value: 500
-  sample:
-    every: "step"
-    value: 100
-    num_images: 0 # WIP
-    pipeline:
-      prompt: 1girl, smile # write your prompt for sampling
-      negative_prompt: worse quality, bad quality, ugly, low quality
-      width: 512
-      height: 768
-      num_inference_steps: 28
-
-model:
-  type: ${pretrained_model.type}_${type}
-  clip_skip: ${pretrained_model.clip_skip}
   noise_offset: 0.05
   snr_gamma: 5
-  lora_unet:
-    enable_train: true
-    rank: 16
-    network_alpha: 16
-    optimizer:
-      # AdamW8bit: bitsandbytes optimizer is supported, but is not that useful for LoRA training in SD1
-      name: AdamW
-      init_args:
-        lr: 0.0001
-    lr_scheduler:
-      name: cosine_with_restarts
-      init_args:
-        num_cycles: 3
-        num_warmup_steps: 100
-  lora_te:
-    enable_train: true
-    rank: 16
-    network_alpha: 16
-    optimizer:
-      name: AdamW
-      init_args:
-        lr: 0.00005
-    lr_scheduler:
-      name: cosine_with_restarts
-      init_args:
-        num_cycles: 3
-        num_warmup_steps: 100
-
-preprocess:
-  # Your dataset folder path, which contains training images and captions(.txt) file with the same filename as the image.
-  folder_path:
-  max_chunk: 64 # 1 chunk = 64 x 64, 64 chunk = 512 x 512, 256 chunk = 1024 x 1024
-  min_chunk: 32
-  cache_vae_outputs: true
-  cache_te_outputs: false # WIP
-
-bucket:
-  enable: true
-
-dataset:
-  random_crop: true
-  random_flip: true
-  shuffle_tags: false # WIP
-
-dataloader:
-  batch_size: ${trainer.batch_size}
-  drop_last: false
-  pin_memory: true
-  num_workers: 1
-  persistent_workers: true
+  max_train:
+    method: epoch
+    value: 10
+optimizer:
+  name: AnyPrecisionAdamW
+  init_args:
+    lr: 0.0005
+lr_scheduler:
+  name: cosine_with_restarts
+  init_args:
+    num_cycles: 3
+    num_warmup_steps: 50
+datapipe:
+  path: #
+  preprocess:
+    cache_vae_outputs: true
+    cache_te_outputs: false
+  dataset:
+    random_crop: true
+    random_flip: true
+    shuffle_tags: false
+    caption_dropout: 0.0
+  dataloader:
+    batch_size: ${trainer.batch_size}
+    drop_last: true
+    pin_memory: true
+    num_workers: 1
+    persistent_workers: true
+logging:
+  logger: null
+  save:
+    every: epoch
+    value: 1
+  sample:
+    every: epoch
+    value: 1
+    pipeline:
+      prompt: #
+      negative_prompt: #
+      width: 512
+      height: 512
+      num_inference_steps: 20
+lora_unet:
+  - r: 16
+    target_modules: []
+    lora_alpha: 16
+    lora_dropout: 0.0
+    bias: none
+lora_te:
+  - r: 16
+    target_modules: []
+    lora_alpha: 16
+    lora_dropout: 0.0
+    bias: none

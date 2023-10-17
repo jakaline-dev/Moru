@@ -1,7 +1,6 @@
 import random
 from torch.utils.data import DataLoader, BatchSampler
-from .custom_dataset import CustomDataset
-from .utils import convert_to_buckets
+from collections import defaultdict
 
 
 class BucketBatchSampler(BatchSampler):
@@ -36,8 +35,16 @@ class BucketBatchSampler(BatchSampler):
         return total_batches
 
 
+def convert_to_buckets(data_list):
+    bucket = defaultdict(list)
+    for idx, entry in enumerate(data_list):
+        grid_key = (entry["grid_width"], entry["grid_height"])
+        bucket[grid_key].append(idx)
+    return bucket
+
+
 def get_bucket_dataloader(
-    dataset: CustomDataset,
+    dataset,
     batch_size: int = 1,
     drop_last: bool = False,
     pin_memory: bool = False,

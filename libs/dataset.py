@@ -4,18 +4,20 @@ from torch.utils.data import Dataset
 from torchvision.transforms import v2
 
 
-class CustomDataset(Dataset):
+class MoruDataset(Dataset):
     def __init__(
         self,
         data,
         random_crop: bool = False,
         random_flip: bool = False,
         shuffle_tags: bool = False,
+        caption_dropout: float = 0.0,
     ):
         self.data = data
         self.random_crop = random_crop
         self.random_flip = random_flip
         self.shuffle_tags = shuffle_tags
+        self.caption_dropout = caption_dropout
 
     def __len__(self):
         return len(self.data)
