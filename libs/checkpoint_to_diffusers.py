@@ -23,7 +23,7 @@ def checkpoint_to_diffusers(checkpoint_path, type="SD1", return_vae=True):
         checkpoint = safe_load(checkpoint_path, device="cpu")
     else:
         checkpoint = torch.load(checkpoint_path, map_location="cpu")
-    checkpoint = checkpoint["state_dict"]
+        checkpoint = checkpoint["state_dict"]
 
     # SD1
     tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-large-patch14")
