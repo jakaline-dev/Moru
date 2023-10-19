@@ -1,6 +1,5 @@
 seed: 42
 name: #
-type: LoRA
 pretrained_model:
   checkpoint_path: #
   architecture: SD1
@@ -14,12 +13,10 @@ trainer:
   noise_offset: 0.05
   snr_gamma: 5
   max_train:
-    method: epoch
-    value: 10
+    method: step
+    value: 1000
 optimizer:
   name: AnyPrecisionAdamW
-  init_args:
-    lr: 0.0005
 lr_scheduler:
   name: cosine_with_restarts
   init_args:
@@ -28,7 +25,7 @@ lr_scheduler:
 datapipe:
   path: #
   preprocess:
-    cache_vae_outputs: true
+    cache_vae_outputs: false
     cache_te_outputs: false
   dataset:
     random_crop: true
@@ -36,7 +33,6 @@ datapipe:
     shuffle_tags: false
     caption_dropout: 0.0
   dataloader:
-    batch_size: ${trainer.batch_size}
     drop_last: true
     pin_memory: true
     num_workers: 1
@@ -44,26 +40,46 @@ datapipe:
 logging:
   logger: null
   save:
-    every: epoch
-    value: 1
+    every: step
+    value: 100
   sample:
-    every: epoch
-    value: 1
+    every: step
+    value: 100
     pipeline:
-      prompt: #
-      negative_prompt: #
+      prompt: "1girl, smile"
+      negative_prompt: "bad quality, worse quality"
       width: 512
       height: 512
       num_inference_steps: 20
-lora_unet:
-  - r: 16
-    target_modules: []
-    lora_alpha: 16
-    lora_dropout: 0.0
-    bias: none
-lora_te:
-  - r: 16
-    target_modules: []
-    lora_alpha: 16
-    lora_dropout: 0.0
-    bias: none
+# Kohya default
+peft:
+  unet:
+    type: LoRA
+    lr: 0.0005
+    parameters:
+      r: 16
+      lora_alpha: 8
+      target_modules:
+        - proj_in
+        - proj_out
+        - to_q
+        - to_k
+        - to_v
+        - to_out.0
+        - ff.net.0.proj
+        - ff.net.2
+      bias: "none"
+  te:
+    type: LoRA
+      lr: 0.00005
+      parameters:
+        r: 16
+        lora_alpha: 8
+        target_modules:
+          - k_proj
+          - v_proj
+          - q_proj
+          - out_proj
+          - fc1
+          - fc2
+        bias: "none"

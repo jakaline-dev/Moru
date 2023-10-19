@@ -4,12 +4,6 @@ from omegaconf import MISSING
 from enum import StrEnum
 
 
-class TrainType(StrEnum):
-    LoRA = "LoRA"
-    Finetune = "Finetune"
-    TI = "TI"
-
-
 class StepOrEpoch(StrEnum):
     step = "step"
     epoch = "epoch"
@@ -20,6 +14,7 @@ class StepOrEpoch(StrEnum):
 class PretrainedModelConfig:
     checkpoint_path: str = MISSING
     architecture: str = "SD1"
+    model_type: str = "SD1"
     clip_skip: int = 1
 
 
@@ -66,9 +61,9 @@ class TrainerConfig:
     batch_size: int = 1
     grad_accum_steps: int = 1
     use_xformers: bool = False
+    max_train: MaxTrainConfig = field(default_factory=MaxTrainConfig)
     noise_offset: float = 0.0
     snr_gamma: int = 0
-    max_train: MaxTrainConfig = field(default_factory=MaxTrainConfig)
 
 
 @dataclass
@@ -130,10 +125,9 @@ class LoggingConfig:
 
 @dataclass
 class BaseConfig:
-    seed: int | None = 42
+    seed: Union[int, None] = 42
     name: str = MISSING
     run_name: str = MISSING
-    type: TrainType = "LoRA"
     fabric: FabricConfig = field(default_factory=FabricConfig)
     pretrained_model: PretrainedModelConfig = field(
         default_factory=PretrainedModelConfig

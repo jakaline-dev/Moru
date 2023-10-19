@@ -2,8 +2,6 @@
 
 Diffusers meets Lightning Fabric.
 
-~~Friendship ended with Accelerate - Now Lightning Fabric is my best friend.~~
-
 2x faster than Kohya trainer.
 
 Not production-ready - not ready at all atm.
@@ -25,7 +23,7 @@ Currently only for Windows - will also support WSL and Linux soon.
 5. Type this:
 
 ```bash
-python SD1LoRA.py --config config-example.yaml
+python run.py --config config-example.yaml
 ```
 
 ## Remarks
@@ -41,7 +39,7 @@ BF16-mixed: FP32, BF16
 BF16-true: BF16, BF16 (Half the VRAM)
 
 When not finetuning (LoRA, TI), always go with bf16-true.
-If you are finetuning, you have two options: bf16-true or bf16-mixed. If you go with bf16-true, the output of the finedtuned model will be set to bf16 dtype, which you cannot retrain with fp32 or fp16 ever again. Training with bf16-true will also have lower accuracy than with fp32 training, but the drop is almost negligible, as SD has a lot of parameters that can make up for it. (Comparison needed)
+If you are finetuning, you have two options: bf16-true or bf16-mixed. If you go with bf16-true, the output of the finedtuned model will be set to bf16 dtype, which you cannot retrain with fp32 or fp16 ever again. Training with bf16-true will also have lower accuracy than with fp32 training, ~~but the drop is almost negligible, as SD has a lot of parameters that can make up for it.~~ Use AnyPrecisionAdamW optimizer with bf16-true for maximum accuracy, and half the vram!
 
 No fp16 - fp16 causes numerical instability (your loss turning into none). Technically this can be alleviated by dynamically controlling the scaling factor of loss when underflow hits, but it's really not that worth it to implement this.
 

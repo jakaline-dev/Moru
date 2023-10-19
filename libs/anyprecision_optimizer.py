@@ -25,7 +25,7 @@ class AnyPrecisionAdamW(Optimizer):
         eps=1e-8,
         weight_decay=0.0,
         use_kahan_summation=True,
-        momentum_dtype=torch.float32,  # torch.float32,
+        momentum_dtype=torch.bfloat16,
         variance_dtype=torch.bfloat16,
         compensation_buffer_dtype=torch.bfloat16,
     ):

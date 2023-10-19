@@ -1,8 +1,11 @@
-# Diffusers Nightly (Currently 0.22.0.dev0, Will pin version at 0.22.0)
-git+https://github.com/huggingface/diffusers
+# Diffusers Nightly (Currently 0.22.0.dev0, will pin version at 0.22.0)
+git+https://github.com/huggingface/diffusers@main
 lightning==2.1.0
-transformers==4.34.0
+transformers==4.34.1
 omegaconf
+accelerate==0.23.0
+# PEFT Nightly (Currently 0.6.0.dev0, will pin version at 0.6.0)
+git+https://github.com/huggingface/peft@main
 
 bitsandbytes==0.41.1; platform_system != "Windows"
 https://github.com/jllllll/bitsandbytes-windows-webui/releases/download/wheels/bitsandbytes-0.41.1-py3-none-win_amd64.whl; platform_system == "Windows"

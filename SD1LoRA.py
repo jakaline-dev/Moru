@@ -1,9 +1,4 @@
-# torch.compile()
-
-import os, sys, argparse
-from datetime import datetime
-import time, math
-from omegaconf import OmegaConf
+import os
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
@@ -11,22 +6,64 @@ from tqdm.auto import tqdm
 
 import lightning as L
 from lightning.pytorch.utilities.seed import isolate_rng
-from lightning.fabric.loggers import CSVLogger
-
-# from lightning.fabric.plugins import BitsandbytesPrecision
-from lightning.fabric import Fabric
 from lightning.fabric.wrappers import _unwrap_objects
 
 from diffusers import EulerDiscreteScheduler, StableDiffusionPipeline
-from diffusers.utils.import_utils import is_xformers_available
 from diffusers.training_utils import compute_snr
 
 from diffusers.models.vae import DiagonalGaussianDistribution
-from diffusers.models.lora import LoRACompatibleLinear
-from diffusers.optimization import get_scheduler
 import safetensors
 
-from libs.LoRA import unet_lora_state_dict
+from peft import LoraConfig, inject_adapter_in_model, get_peft_model, AdaLoraConfig
+
+
+def get_training_parameters(config, unet, text_encoder):
+    parameters = []
+    if config.peft.unet:
+        lora_unet_config = LoraConfig(**config.peft.unet.parameters)
+        unet = inject_adapter_in_model(lora_unet_config, unet)
+        parameters += [
+            {
+                "params": [
+                    p
+                    for n, p in unet.named_parameters()
+                    if (p.requires_grad and "bias" not in n)
+                ],
+                "lr": config.peft.unet.lr,
+            },
+            {
+                "params": [
+                    p
+                    for n, p in unet.named_parameters()
+                    if (p.requires_grad and "bias" in n)
+                ],
+                "lr": config.peft.unet.lr,
+                "weight_decay": 0.0,
+            },
+        ]
+    if config.peft.te:
+        lora_te_config = LoraConfig(**config.peft.te.parameters)
+        text_encoder = inject_adapter_in_model(lora_te_config, text_encoder)
+        parameters += [
+            {
+                "params": [
+                    p
+                    for n, p in text_encoder.named_parameters()
+                    if (p.requires_grad and "bias" not in n)
+                ],
+                "lr": config.peft.te.lr,
+            },
+            {
+                "params": [
+                    p
+                    for n, p in text_encoder.named_parameters()
+                    if (p.requires_grad and "bias" in n)
+                ],
+                "lr": config.peft.te.lr,
+                "weight_decay": 0.0,
+            },
+        ]
+    return parameters, unet, text_encoder
 
 
 def train(
@@ -188,15 +225,21 @@ def train(
 
 
 def save_lora_checkpoint(config, unet, text_encoder, current_iter=None):
+    state_dict = {}
+    if config.peft.unet:
+        for name, params in _unwrap_objects(unet).named_parameters():
+            if params.requires_grad:
+                state_dict[name] = params
+    if config.peft.te:
+        for name, params in _unwrap_objects(text_encoder).named_parameters():
+            if params.requires_grad:
+                state_dict[name] = params
     if current_iter:
         save_file_name = (
             f"{config.name}_{current_iter}_{config.logging.save.every}.safetensors"
         )
     else:
         save_file_name = f"{config.name}.safetensors"
-
-    state_dict = {}
-    state_dict.update(unet_lora_state_dict(_unwrap_objects(unet), alpha=16))
 
     os.makedirs(f"runs/{config.run_name}/output", exist_ok=True)
     safetensors.torch.save_file(

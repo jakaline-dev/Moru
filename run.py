@@ -4,22 +4,21 @@ import torch
 from datetime import datetime
 import lightning as L
 from omegaconf import OmegaConf
-from configs.LoRAConfig import LoRAConfig
+
+
 from lightning.fabric import Fabric
-from diffusers.pipelines.stable_diffusion.convert_from_ckpt import (
+from diffusers.utils.import_utils import is_xformers_available
+from diffusers.optimization import get_scheduler
+from configs.PEFTConfig import PEFTConfig
+
+from libs.convert_from_ckpt import (
     download_from_original_stable_diffusion_ckpt,
 )
-from diffusers.utils.import_utils import is_xformers_available
 from libs.preprocessing import load_data, captions_to_tokens, cache_vae_outputs
 from libs.dataset import MoruDataset
 from libs.bucket_dataloader import get_bucket_dataloader
 from libs.utils import load_optimizer
-from libs.LoRA import set_unet_lora_linear_layer
-from peft import LoraConfig, inject_adapter_in_model
-from SD1LoRA import train
-from diffusers.models.lora import LoRACompatibleLinear
-from libs.checkpoint_to_diffusers import checkpoint_to_diffusers
-from diffusers.optimization import get_scheduler
+from SD1LoRA import train, get_training_parameters
 
 
 def main(config):
@@ -83,51 +82,15 @@ def main(config):
     else:
         raise Exception("max_train.method is either 'step' or 'epoch'")
 
-    lora_unet_params = []
-    trainable_unet_layers = []
-    for name, module in unet.named_modules():
-        # if isinstance(module, LoRACompatibleLinear):
-        if not list(module.children()) and any(
-            [
-                x in name
-                for x in [
-                    "to_q",
-                    "to_k",
-                    "to_v",
-                    "to_out.0",
-                    "ff.net.0.proj",
-                    "ff.net.2",
-                ]
-            ]
-        ):
-            trainable_unet_layers.append(name)
+    # print(text_encoder)
+    # print(unet)
 
-    for name in trainable_unet_layers:
-        # Navigate the nested structure to get to the module
-        module = unet
-        for attr in name.split("."):
-            module = getattr(module, attr)
-        # print(name)
-        if isinstance(module, LoRACompatibleLinear):
-            set_unet_lora_linear_layer(
-                module,
-                rank=16,
-                network_alpha=16,
-            )
-        lora_unet_params.extend(module.lora_layer.parameters())
+    trainable_parameters, unet, text_encoder = get_training_parameters(
+        config, unet, text_encoder
+    )
 
-    # lora_unet_config = LoraConfig(
-    #     r=16,
-    #     lora_alpha=16,
-    #     target_modules=["to_q", "to_v"],
-    #     lora_dropout=0.0,
-    #     bias="none",
-    # )
-
-    # unet = inject_adapter_in_model(lora_unet_config, unet)
-    # lora_unet_params = filter(lambda p: p.requires_grad, unet.parameters())
     optimizer = load_optimizer(config.optimizer.name)(
-        lora_unet_params, **config.optimizer.init_args
+        trainable_parameters, **config.optimizer.init_args
     )
     unet, optimizer = fabric.setup(unet, optimizer)
     lr_scheduler = get_scheduler(
@@ -176,7 +139,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # omegaconf
-    config = OmegaConf.structured(LoRAConfig)
+    config = OmegaConf.structured(PEFTConfig)
     # with open("config.yaml", "w") as f:
     #     f.write(OmegaConf.to_yaml(config))
     yaml_config = OmegaConf.load(args.config)
