@@ -24,7 +24,7 @@ class MoruDataset(Dataset):
 
     def __getitem__(self, idx):
         entry = self.data[idx]
-        available_keys = ["input_ids"]
+        available_keys = []
         if "latent_values" not in entry:
             tfs = v2.Compose(
                 [
@@ -46,7 +46,11 @@ class MoruDataset(Dataset):
             available_keys.append("pixel_values")
         else:
             available_keys.append("latent_values")
-        if len(entry["input_ids"].shape) > 1:
-            entry["input_ids"] = random.choice(entry["input_ids"])
+        if "text_embeddings" not in entry:
+            if len(entry["input_ids"].shape) > 1:
+                entry["input_ids"] = random.choice(entry["input_ids"])
+            available_keys.append("input_ids")
+        else:
+            available_keys.append("text_embeddings")
 
         return {key: entry[key] for key in available_keys if key in entry}

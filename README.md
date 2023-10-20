@@ -1,6 +1,6 @@
 # Moru Trainer
 
-Diffusers meets Lightning Fabric.
+Diffusers meets Lightning Fabric
 
 2x faster than Kohya trainer.
 
@@ -26,58 +26,19 @@ Currently only for Windows - will also support WSL and Linux soon.
 python run.py --config config-example.yaml
 ```
 
-## Remarks
-
-### Remarks about precision
-
-There are two factors:
-
-- A: The precision of the original model (Related to vram usage)
-- B: The precision of computations (Related to training speed)
-
-BF16-mixed: FP32, BF16
-BF16-true: BF16, BF16 (Half the VRAM)
-
-When not finetuning (LoRA, TI), always go with bf16-true.
-If you are finetuning, you have two options: bf16-true or bf16-mixed. If you go with bf16-true, the output of the finedtuned model will be set to bf16 dtype, which you cannot retrain with fp32 or fp16 ever again. Training with bf16-true will also have lower accuracy than with fp32 training, ~~but the drop is almost negligible, as SD has a lot of parameters that can make up for it.~~ Use AnyPrecisionAdamW optimizer with bf16-true for maximum accuracy, and half the vram!
-
-No fp16 - fp16 causes numerical instability (your loss turning into none). Technically this can be alleviated by dynamically controlling the scaling factor of loss when underflow hits, but it's really not that worth it to implement this.
-
-### Remarks about difference of LoRA training with Kohya's and Moru Trainer
-
-As of today, kohya's trainer trains these layers when training LoRA.
-
-- text encoder attention modules: q, k, v, o
-- text encoder MLP modules: ff1, ff2
-- unet projection : proj_in, proj_out
-- unet attention modules: q, k, v, o
-- unet MLP modules: ff.net.0, ff.net.2
-
-However, Moru trainer does not train proj_in and proj_out of unet, as this is a convolution layer in SD1.
-
-### Remarks about 'network_alpha' value
-
-In the LoRA paper, the authors scale the weight updates by a factor of network_alpha divided by the LoRA rank. The introduction of this alpha value serves to normalize tests conducted with various ranks, since the magnitude of the weight updates is proportional to these ranks. By establishing a standard alpha value of 8, the authors are able to facilitate a fair comparison of LoRAs with different ranks, ensuring consistency in the size of the weight updates throughout training.
-
-TL;DR: Quoting the paper,
-
-> ...tuning α is roughly the same as tuning the learning rate if we scale the initialization appropriately.
-
 ## Todo
 
-### Todo (ASAP)
+[x] Image Bucketing
+[] Kohya LoRA format support
+[] Easy Installers
+[] Textual Inversion
+[] SDXL Finetuning
+[] SDXL LoRA Training
 
-- ~~Image Bucketing~~
-- SDXL Finetuning
-- Easy Installers
-- SDXL LoRAs
-- Textual Inversion
-- Docs! (Docs.)
-
-### Future Endeavours
+## Future Endeavours
 
 - Image Padding / Masking
-- LoRA-FA
+- New PEFT (LoRA-FA, iA3, Bit-fit, VeRA, ...)
 - P+ (TI embeds with layers)
 - NeTI (TI embeds with timesteps)
 - Würstchen v3 (When it's up)
@@ -88,5 +49,6 @@ This trainer was built from the shoulders of many giants. Also, just giving a sh
 
 - [Diffusers](https://huggingface.co/docs/diffusers/index)
 - [Kohya Trainer](https://github.com/kohya-ss/sd-scripts)
+- https://github.com/cloneofsimo/lora
 - [Lightning Fabric](https://lightning.ai)
 - And [Stability AI](https://github.com/Stability-AI/generative-models)

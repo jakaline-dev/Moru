@@ -122,16 +122,19 @@ def train(
                 # (this is the forward diffusion process)
                 noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
-                # Get the text embedding for conditioning
-                encoder_outputs = text_encoder(
-                    batch["input_ids"], output_hidden_states=True
-                )
-
-                encoder_hidden_states = text_encoder.text_model.final_layer_norm(
-                    encoder_outputs.hidden_states[-config.trainer.clip_skip].to(
-                        dtype=latents.dtype
+                if "text_embeddings" in batch:
+                    encoder_hidden_states = batch["text_embeddings"]
+                else:
+                    # Get the text embedding for conditioning
+                    encoder_outputs = text_encoder(
+                        batch["input_ids"], output_hidden_states=True
                     )
-                )
+
+                    encoder_hidden_states = text_encoder.text_model.final_layer_norm(
+                        encoder_outputs.hidden_states[-config.trainer.clip_skip].to(
+                            dtype=latents.dtype
+                        )
+                    )
                 # Predict the noise residual and compute loss
                 model_pred = unet(
                     noisy_latents, timesteps, encoder_hidden_states

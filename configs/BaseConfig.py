@@ -14,7 +14,6 @@ class StepOrEpoch(StrEnum):
 class PretrainedModelConfig:
     checkpoint_path: str = MISSING
     architecture: str = "SD1"
-    model_type: str = "SD1"
     clip_skip: int = 1
 
 

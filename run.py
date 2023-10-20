@@ -2,18 +2,23 @@ import os, sys, time
 import argparse
 import torch
 from datetime import datetime
-import lightning as L
 from omegaconf import OmegaConf
-
-
+import lightning as L
 from lightning.fabric import Fabric
 from diffusers.utils.import_utils import is_xformers_available
 from diffusers.optimization import get_scheduler
+from transformers import CLIPTextModel
+
 
 from libs.convert_from_ckpt import (
     download_from_original_stable_diffusion_ckpt,
 )
-from libs.preprocessing import load_data, captions_to_tokens, cache_vae_outputs
+from libs.preprocessing import (
+    cache_te_outputs,
+    load_data,
+    captions_to_tokens,
+    cache_vae_outputs,
+)
 from libs.dataset import MoruDataset
 from libs.bucket_dataloader import get_bucket_dataloader
 from libs.utils import load_optimizer
@@ -38,9 +43,9 @@ def main(config):
         )
         noise_scheduler = pipe.scheduler
         tokenizer = pipe.tokenizer
-        text_encoder = pipe.text_encoder.to(fabric.device)
+        text_encoder: CLIPTextModel = pipe.text_encoder
         unet = pipe.unet
-        vae = pipe.vae.to(fabric.device)
+        vae = pipe.vae
 
     vae.requires_grad_(False)
     for param in unet.parameters():
@@ -66,8 +71,18 @@ def main(config):
         fabric.print("Caching VAE outputs")
         with fabric.autocast():
             data_list = cache_vae_outputs(data_list, vae, fabric.device)
+
+    # Cache Tokenizer
+    fabric.print("Caching Tokenizer")
     data_list = captions_to_tokens(data_list, tokenizer)
-    # TODO: Cache Text Encoder output
+
+    # Cache Text Encoder output
+    if config.datapipe.preprocess.cache_te_outputs:
+        fabric.print("Caching Text Encoder outputs")
+        with fabric.autocast():
+            data_list = cache_te_outputs(
+                data_list, text_encoder, fabric.device, config.trainer.clip_skip
+            )
 
     # Load Dataset
     dataset = MoruDataset(data_list, **config.datapipe.dataset)
@@ -105,6 +120,9 @@ def main(config):
         num_training_steps=total_steps,
         **config.lr_scheduler.init_args,
     )
+    vae.to(fabric.device)
+    unet.to(fabric.device)
+    text_encoder.to(fabric.device)
     train_time = time.perf_counter()
     train(
         config,

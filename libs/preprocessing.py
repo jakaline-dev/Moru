@@ -138,6 +138,29 @@ def cache_vae_outputs(data_list, vae, device):
         latent_dist = vae.encode(pixel_values.to(device)).latent_dist
         entry["latent_values"] = latent_dist.parameters
         entry["latent_values"] = entry["latent_values"].squeeze(dim=0).to("cpu")
+        del entry["image"]
+        del pixel_values
     vae.to("cpu")
+    torch.cuda.empty_cache()
+    return data_list
+
+
+@torch.inference_mode()
+def cache_te_outputs(data_list, text_encoder, device, clip_skip):
+    text_encoder.to(device)
+    for entry in tqdm(data_list):
+        # Get the text embedding for conditioning
+        encoder_outputs = text_encoder(
+            entry["input_ids"].to(device).unsqueeze(dim=0), output_hidden_states=True
+        )
+        entry["text_embeddings"] = (
+            text_encoder.text_model.final_layer_norm(
+                encoder_outputs.hidden_states[-clip_skip].to(dtype=text_encoder.dtype)
+            )
+            .squeeze(dim=0)
+            .to("cpu")
+        )
+        del entry["input_ids"]
+    text_encoder.to("cpu")
     torch.cuda.empty_cache()
     return data_list
