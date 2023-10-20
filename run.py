@@ -9,7 +9,6 @@ from omegaconf import OmegaConf
 from lightning.fabric import Fabric
 from diffusers.utils.import_utils import is_xformers_available
 from diffusers.optimization import get_scheduler
-from configs.PEFTConfig import PEFTConfig
 
 from libs.convert_from_ckpt import (
     download_from_original_stable_diffusion_ckpt,
@@ -18,6 +17,8 @@ from libs.preprocessing import load_data, captions_to_tokens, cache_vae_outputs
 from libs.dataset import MoruDataset
 from libs.bucket_dataloader import get_bucket_dataloader
 from libs.utils import load_optimizer
+
+from configs.PEFTConfig import PEFTConfig
 from SD1LoRA import train, get_training_parameters
 
 
@@ -40,9 +41,13 @@ def main(config):
         text_encoder = pipe.text_encoder.to(fabric.device)
         unet = pipe.unet
         vae = pipe.vae.to(fabric.device)
-    unet.requires_grad_(False)
+
     vae.requires_grad_(False)
-    text_encoder.requires_grad_(False)
+    for param in unet.parameters():
+        param.requires_grad_(False)
+    for param in text_encoder.parameters():
+        param.requires_grad_(False)
+
     if config.trainer.use_xformers and is_xformers_available():
         import xformers
 
@@ -82,17 +87,18 @@ def main(config):
     else:
         raise Exception("max_train.method is either 'step' or 'epoch'")
 
-    # print(text_encoder)
-    # print(unet)
-
-    trainable_parameters, unet, text_encoder = get_training_parameters(
-        config, unet, text_encoder
-    )
-
+    trainable_parameters = []
+    p, unet, text_encoder = get_training_parameters(config, unet, text_encoder)
+    trainable_parameters += p
     optimizer = load_optimizer(config.optimizer.name)(
         trainable_parameters, **config.optimizer.init_args
     )
-    unet, optimizer = fabric.setup(unet, optimizer)
+    if config.peft.unet:
+        unet = fabric.setup(unet)
+    if config.peft.te:
+        text_encoder = fabric.setup(text_encoder)
+    optimizer = fabric.setup_optimizers(optimizer)
+
     lr_scheduler = get_scheduler(
         config.lr_scheduler.name,
         optimizer=optimizer,
@@ -105,13 +111,13 @@ def main(config):
         fabric,
         dataloader,
         total_steps,
+        optimizer,
+        lr_scheduler,
         tokenizer,
         noise_scheduler,
         text_encoder,
         vae,
         unet,
-        optimizer,
-        lr_scheduler,
     )
     fabric.print(f"Training time: {(time.perf_counter()-train_time):.2f}s")
     if fabric.device.type == "cuda":
@@ -146,4 +152,3 @@ if __name__ == "__main__":
     config = OmegaConf.merge(config, yaml_config)
     config.run_name = f"{datetime.now().strftime('%Y_%m_%d_%H_%M_%S')}_{config.name}"
     main(config)
-    # setup()

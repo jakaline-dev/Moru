@@ -10,18 +10,17 @@ from lightning.fabric.wrappers import _unwrap_objects
 
 from diffusers import EulerDiscreteScheduler, StableDiffusionPipeline
 from diffusers.training_utils import compute_snr
-
 from diffusers.models.vae import DiagonalGaussianDistribution
-import safetensors
 
-from peft import LoraConfig, inject_adapter_in_model, get_peft_model, AdaLoraConfig
+from peft import LoraConfig
+from peft.utils import get_peft_model_state_dict
 
 
 def get_training_parameters(config, unet, text_encoder):
     parameters = []
     if config.peft.unet:
-        lora_unet_config = LoraConfig(**config.peft.unet.parameters)
-        unet = inject_adapter_in_model(lora_unet_config, unet)
+        unet_lora_config = LoraConfig(**config.peft.unet.parameters)
+        unet.add_adapter(unet_lora_config)
         parameters += [
             {
                 "params": [
@@ -42,8 +41,8 @@ def get_training_parameters(config, unet, text_encoder):
             },
         ]
     if config.peft.te:
-        lora_te_config = LoraConfig(**config.peft.te.parameters)
-        text_encoder = inject_adapter_in_model(lora_te_config, text_encoder)
+        te_lora_config = LoraConfig(**config.peft.te.parameters)
+        text_encoder.add_adapter(te_lora_config)
         parameters += [
             {
                 "params": [
@@ -71,13 +70,13 @@ def train(
     fabric: L.Fabric,
     dataloader: DataLoader,
     total_steps: int,
+    optimizer,
+    lr_scheduler,
     tokenizer,
     noise_scheduler,
     text_encoder,
     vae,
     unet,
-    optimizer,
-    lr_scheduler,
 ):
     current_epoch = 0
     current_step = 0
@@ -176,7 +175,7 @@ def train(
                 config.logging.save.every == "step"
                 and current_step % config.logging.save.value == 0
             ):
-                save_lora_checkpoint(config, unet, text_encoder, current_step)
+                save_lora_checkpoint(config, fabric, unet, text_encoder, current_step)
             if (
                 config.logging.sample.every == "step"
                 and current_step % config.logging.sample.value == 0
@@ -207,7 +206,7 @@ def train(
             config.logging.save.every == "epoch"
             and current_epoch % config.logging.save.value == 0
         ):
-            save_lora_checkpoint(config, unet, text_encoder, current_epoch)
+            save_lora_checkpoint(config, fabric, unet, text_encoder, current_epoch)
         if (
             config.logging.sample.every == "epoch"
             and current_epoch % config.logging.sample.value == 0
@@ -224,16 +223,14 @@ def train(
             )
 
 
-def save_lora_checkpoint(config, unet, text_encoder, current_iter=None):
-    state_dict = {}
+def save_lora_checkpoint(config, fabric, unet, text_encoder, current_iter=None):
+    unet_lora_state_dict = None
+    te_lora_state_dict = None
     if config.peft.unet:
-        for name, params in _unwrap_objects(unet).named_parameters():
-            if params.requires_grad:
-                state_dict[name] = params
+        unet_lora_state_dict = get_peft_model_state_dict(_unwrap_objects(unet))
     if config.peft.te:
-        for name, params in _unwrap_objects(text_encoder).named_parameters():
-            if params.requires_grad:
-                state_dict[name] = params
+        te_lora_state_dict = get_peft_model_state_dict(_unwrap_objects(text_encoder))
+
     if current_iter:
         save_file_name = (
             f"{config.name}_{current_iter}_{config.logging.save.every}.safetensors"
@@ -242,10 +239,13 @@ def save_lora_checkpoint(config, unet, text_encoder, current_iter=None):
         save_file_name = f"{config.name}.safetensors"
 
     os.makedirs(f"runs/{config.run_name}/output", exist_ok=True)
-    safetensors.torch.save_file(
-        state_dict,
-        f"runs/{config.run_name}/output/{save_file_name}",
-        metadata={"format": "pt"},
+    StableDiffusionPipeline.save_lora_weights(
+        save_directory=f"runs/{config.run_name}/output/",
+        weight_name=save_file_name,
+        unet_lora_layers=unet_lora_state_dict,
+        text_encoder_lora_layers=te_lora_state_dict,
+        safe_serialization=True,
+        is_main_process=fabric.is_global_zero,
     )
 
 
@@ -272,7 +272,7 @@ def sample_images(
     pipeline = StableDiffusionPipeline(
         tokenizer=tokenizer,
         scheduler=EulerDiscreteScheduler.from_config(noise_scheduler.config),
-        text_encoder=text_encoder,
+        text_encoder=_unwrap_objects(text_encoder),
         unet=_unwrap_objects(unet),
         vae=vae,
         # torch_dtype=vae.dtype,
