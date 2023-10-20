@@ -28,11 +28,11 @@ python run.py --config config-example.yaml
 
 ## Todo
 
-[x] Image Bucketing
-[] Kohya LoRA format support
-[] Easy Installers
-[] Textual Inversion
-[] SDXL Finetuning
+[x] Image Bucketing\
+[] Kohya LoRA format support\
+[] Easy Installers\
+[] Textual Inversion\
+[] SDXL Finetuning\
 [] SDXL LoRA Training
 
 ## Future Endeavours
