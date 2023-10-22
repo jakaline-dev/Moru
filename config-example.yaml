@@ -29,8 +29,10 @@ lr_scheduler:
     num_cycles: 3
     num_warmup_steps: 50
 preprocess:
-  max_chunk: 96
+  max_chunk: 128
   min_chunk: 32
+  caption_template:
+    - A picture of {name}
 dataset:
   random_crop: true
   random_flip: true

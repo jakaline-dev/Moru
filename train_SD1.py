@@ -24,6 +24,7 @@ from libs.convert_from_ckpt import (
     download_from_original_stable_diffusion_ckpt,
 )
 from libs.preprocessing import (
+    add_captions,
     cache_te_outputs,
     load_data,
     captions_to_tokens,
@@ -65,7 +66,11 @@ def main(config: SD1Config):
         print("xformers enabled!")
 
     # preprocess
-    data_list = load_data(config.paths.train_data_path, **config.preprocess)
+    data_list = load_data(
+        config.paths.train_data_path,
+        max_chunk=config.preprocess.max_chunk,
+        min_chunk=config.preprocess.min_chunk,
+    )
     assert len(data_list) > 0, "Empty folder or incorrect path"
     # Cache VAE latent output
     if config.trainer.cache_vae_outputs:
@@ -75,6 +80,10 @@ def main(config: SD1Config):
 
     # Cache Tokenizer
     fabric.print("Caching Tokenizer")
+    if config.preprocess.caption_template:
+        data_list = add_captions(
+            data_list, config.preprocess.caption_template, name=config.name
+        )
     data_list = captions_to_tokens(data_list, tokenizer)
 
     # Cache Text Encoder output
@@ -86,7 +95,7 @@ def main(config: SD1Config):
             )
 
     # Load Dataset
-    dataset = MoruDataset(data_list, **config.dataset)
+    dataset = MoruDataset(data_list, tokenizer=tokenizer, **config.dataset)
     dataloader = get_bucket_dataloader(dataset, **config.dataloader)
     fabric.print(
         {key: len(value) for key, value in dataloader.batch_sampler.buckets.items()}

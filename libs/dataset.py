@@ -2,17 +2,21 @@ import random
 import torch
 from torch.utils.data import Dataset
 from torchvision.transforms import v2
+from transformers import CLIPTokenizer
 
 
 class MoruDataset(Dataset):
     def __init__(
         self,
         data,
+        tokenizer=None,
         random_crop: bool = False,
         random_flip: bool = False,
         shuffle_tags: bool = False,
         caption_dropout: float = 0.0,
     ):
+        if not tokenizer:
+            tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-large-patch14")
         self.data = data
         self.random_crop = random_crop
         self.random_flip = random_flip
@@ -46,11 +50,18 @@ class MoruDataset(Dataset):
             available_keys.append("pixel_values")
         else:
             available_keys.append("latent_values")
-        if "text_embeddings" not in entry:
+        if "text_embeddings" in entry:
+            available_keys.append("text_embeddings")
+        elif "input_ids" in entry:
             if len(entry["input_ids"].shape) > 1:
                 entry["input_ids"] = random.choice(entry["input_ids"])
             available_keys.append("input_ids")
         else:
-            available_keys.append("text_embeddings")
-
+            entry["input_ids"] = self.tokenizer(
+                entry["caption"],
+                padding=True,
+                return_tensors="pt",
+                pad_to_multiple_of=self.tokenizer.model_max_length,
+            ).input_ids
+            available_keys.append("input_ids")
         return {key: entry[key] for key in available_keys if key in entry}

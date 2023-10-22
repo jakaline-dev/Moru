@@ -6,6 +6,7 @@ from tqdm.auto import tqdm
 import torch
 from torchvision.transforms import v2
 from transformers import CLIPTokenizer
+import random
 
 
 def load_data(img_folder, max_chunk=256, min_chunk=32):
@@ -119,15 +120,27 @@ def preprocess_image(image_path, max_chunk=256, min_chunk=32):
     return image, (grid_width, grid_height)
 
 
+def add_captions(data, caption_list, name=None):
+    for entry in data:
+        select_caption = None
+        if entry["caption"]:
+            select_caption = entry[
+                "caption"
+            ]  # if type(entry['caption']) is str else entry['caption']
+        entry["input_ids"] = random.choice(caption_list).format(
+            caption=select_caption, name=name
+        )
+    return data
+
+
 def captions_to_tokens(data, tokenizer):
     if not tokenizer:
         tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-large-patch14")
     input_ids = tokenizer(
         [entry["caption"] for entry in data],
-        max_length=tokenizer.model_max_length,
-        padding="max_length",
-        truncation=True,
+        padding=True,
         return_tensors="pt",
+        pad_to_multiple_of=tokenizer.model_max_length,
     ).input_ids
 
     for i, entry in enumerate(data):

@@ -26,7 +26,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--debug-config",
-        action="store_false",
+        action="store_true",
         help="Save a default configuration YAML file",
     )
     args = parser.parse_args()
@@ -34,6 +34,7 @@ if __name__ == "__main__":
     # omegaconf
     config = OmegaConf.structured(SD1Config)
     if args.debug_config:
+        print("Write debug config")
         with open("config_.yaml", "w") as f:
             f.write(OmegaConf.to_yaml(config))
         sys.exit(0)
