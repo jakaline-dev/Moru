@@ -23,14 +23,15 @@ Currently only for Windows - will also support WSL and Linux soon.
 5. Type this:
 
 ```bash
-python run.py --config config-example.yaml
+python main.py --config config-example.yaml
 ```
 
 ## Todo
 
 - [x] Image Bucketing
-- [] Kohya LoRA format support
+- [] Kohya LoRA format support (To use with Auto1111, Comfy, etc...)
 - [] Easy Installers
+- [] Gradio Frontend
 - [] Textual Inversion
 - [] SDXL Finetuning
 - [] SDXL LoRA Training
