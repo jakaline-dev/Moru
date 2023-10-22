@@ -97,6 +97,7 @@ def preprocess_image(image_path, max_chunk=256, min_chunk=32):
         grid_height = 64 * (n + 1)
 
     image = image.resize((new_width, new_height), Image.Resampling.BICUBIC)
+
     if image.mode == "RGBA":
         # No transparency allowed in PNGs - change alpha to white
         white_background = Image.new("RGB", image.size, (255, 255, 255))

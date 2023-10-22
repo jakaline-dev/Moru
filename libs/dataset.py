@@ -28,9 +28,9 @@ class MoruDataset(Dataset):
         if "latent_values" not in entry:
             tfs = v2.Compose(
                 [
-                    v2.RandomCrop(entry["grid_width"], entry["grid_height"])
+                    v2.RandomCrop([entry["grid_height"], entry["grid_width"]])
                     if self.random_crop
-                    else v2.CenterCrop(entry["grid_width"], entry["grid_height"]),
+                    else v2.CenterCrop([entry["grid_height"], entry["grid_width"]]),
                     v2.RandomHorizontalFlip()
                     if self.random_flip
                     else v2.Lambda(lambda x: x),

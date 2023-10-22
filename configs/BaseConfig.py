@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Dict, Union, Optional, List
 from omegaconf import MISSING
 from enum import StrEnum
@@ -11,10 +11,9 @@ class StepOrEpoch(StrEnum):
 
 
 @dataclass
-class PretrainedModelConfig:
-    checkpoint_path: str = MISSING
-    architecture: str = "SD1"
-    clip_skip: int = 1
+class PathConfig:
+    base_checkpoint_path: str = MISSING
+    train_data_path: str = MISSING
 
 
 @dataclass
@@ -44,7 +43,6 @@ class SamplePipelineConfig:
     width: int = 512
     height: int = 512
     num_inference_steps: int = 20
-    clip_skip: int = "${pretrained_model.clip_skip}"
 
 
 @dataclass
@@ -56,13 +54,11 @@ class SampleConfig:
 
 @dataclass
 class TrainerConfig:
-    clip_skip: int = "${pretrained_model.clip_skip}"
-    batch_size: int = 1
     grad_accum_steps: int = 1
     use_xformers: bool = False
+    cache_vae_outputs: bool = False
+    cache_te_outputs: bool = False
     max_train: MaxTrainConfig = field(default_factory=MaxTrainConfig)
-    noise_offset: float = 0.0
-    snr_gamma: int = 0
 
 
 @dataclass
@@ -85,8 +81,6 @@ class LRSchedulerConfig:
 class PreprocessConfig:
     max_chunk: int = 64
     min_chunk: int = 32
-    cache_vae_outputs: bool = False
-    cache_te_outputs: bool = False
 
 
 @dataclass
@@ -99,7 +93,7 @@ class DatasetConfig:
 
 @dataclass
 class DataloaderConfig:
-    batch_size: int = "${trainer.batch_size}"
+    batch_size: int = 1
     drop_last: bool = True
     pin_memory: bool = True
     num_workers: int = 1
@@ -110,9 +104,6 @@ class DataloaderConfig:
 class DataPipelineConfig:
     path: Optional[str] = MISSING
     hf_repo: Optional[str] = MISSING
-    preprocess: PreprocessConfig = field(default_factory=PreprocessConfig)
-    dataset: DatasetConfig = field(default_factory=DatasetConfig)
-    dataloader: DataloaderConfig = field(default_factory=DataloaderConfig)
 
 
 @dataclass
@@ -128,13 +119,13 @@ class BaseConfig:
     name: str = MISSING
     run_name: str = MISSING
     fabric: FabricConfig = field(default_factory=FabricConfig)
-    pretrained_model: PretrainedModelConfig = field(
-        default_factory=PretrainedModelConfig
-    )
+    paths: PathConfig = field(default_factory=PathConfig)
     trainer: TrainerConfig = field(default_factory=TrainerConfig)
     optimizer: OptimizerConig = field(default_factory=OptimizerConig)
     lr_scheduler: Union[LRSchedulerConfig, None] = field(
         default_factory=LRSchedulerConfig
     )
-    datapipe: DataPipelineConfig = field(default_factory=DataPipelineConfig)
+    preprocess: PreprocessConfig = field(default_factory=PreprocessConfig)
+    dataset: DatasetConfig = field(default_factory=DatasetConfig)
+    dataloader: DataloaderConfig = field(default_factory=DataloaderConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)

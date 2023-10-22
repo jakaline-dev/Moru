@@ -1,64 +1,65 @@
 seed: 42
-name: #
-pretrained_model:
-  checkpoint_path: #
-  architecture: SD1
-  clip_skip: 2
+name: ???
 fabric:
+  accelerator: auto
+  strategy: auto
+  devices: auto
   precision: bf16-true
+paths:
+  base_checkpoint_path: ???
+  train_data_path: ???
 trainer:
-  batch_size: 1
   grad_accum_steps: 1
   use_xformers: false
-  noise_offset: 0.05
-  snr_gamma: 5
+  cache_vae_outputs: false
+  cache_te_outputs: false
   max_train:
-    method: step
-    value: 1000
+    method: epoch
+    value: 10
 optimizer:
   name: AnyPrecisionAdamW
+  init_args:
+    lr: 0.0001
 lr_scheduler:
   name: cosine_with_restarts
   init_args:
     num_cycles: 3
     num_warmup_steps: 50
-datapipe:
-  path: #
-  preprocess:
-    cache_vae_outputs: false
-    cache_te_outputs: false
-  dataset:
-    random_crop: true
-    random_flip: true
-    shuffle_tags: false
-    caption_dropout: 0.0
-  dataloader:
-    drop_last: true
-    pin_memory: true
-    num_workers: 1
-    persistent_workers: true
+preprocess:
+  max_chunk: 96
+  min_chunk: 32
+dataset:
+  random_crop: true
+  random_flip: true
+  shuffle_tags: false
+  caption_dropout: 0.0
+dataloader:
+  batch_size: 1
+  drop_last: true
+  pin_memory: true
+  num_workers: 1
+  persistent_workers: true
 logging:
   logger: null
   save:
-    every: step
-    value: 100
+    every: epoch
+    value: 1
   sample:
-    every: step
-    value: 100
+    every: epoch
+    value: 1
     pipeline:
-      prompt: "1girl, smile"
-      negative_prompt: "bad quality, worse quality"
+      prompt: ""
+      negative_prompt: ""
       width: 512
       height: 512
       num_inference_steps: 20
-# Kohya default
-peft:
-  unet:
+unet:
+  train: true
+  peft:
     type: LoRA
     lr: 0.0005
     parameters:
       r: 16
-      lora_alpha: 8
       target_modules:
         - proj_in
         - proj_out
@@ -68,18 +69,30 @@ peft:
         - to_out.0
         - ff.net.0.proj
         - ff.net.2
-      bias: "none"
-  te:
+      lora_alpha: 16
+      lora_dropout: 0.0
+      bias: none
+      rank_pattern: {}
+      alpha_pattern: {}
+  noise_offset: 0.0
+  snr_gamma: 0
+text_encoder:
+  train: true
+  peft:
     type: LoRA
-    lr: 0.00005
+    lr: 0.0005
     parameters:
       r: 16
-      lora_alpha: 8
       target_modules:
+        - q_proj
         - k_proj
         - v_proj
-        - q_proj
         - out_proj
         - fc1
         - fc2
-      bias: "none"
+      lora_alpha: 16
+      lora_dropout: 0.0
+      bias: none
+      rank_pattern: {}
+      alpha_pattern: {}
+  clip_skip: 1

@@ -179,5 +179,5 @@ pyrightconfig.json
 config.yaml
 runs/
 installer_files
-xformers-0.0.23+16e4245.d20231016-cp311-cp311-win_amd64.whl
+*.whl
 *.ipynb

@@ -1,0 +1,43 @@
+import torch
+import argparse
+import sys
+from datetime import datetime
+from omegaconf import OmegaConf
+from configs.SD1Config import SD1Config
+from train_SD1 import main as train_SD1
+
+if __name__ == "__main__":
+    # set environment
+    if torch.cuda.is_available():
+        capability = torch.cuda.get_device_capability(torch.device("cuda"))
+        if capability[0] >= 8:
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cuda.allow_tf32 = True
+            print("TF32 Enabled")
+            torch.set_float32_matmul_precision("medium")
+
+    # argparse
+    parser = argparse.ArgumentParser(description="Provide configuration file.")
+    parser.add_argument(
+        "--config",
+        default="config.yaml",
+        type=str,
+        help="Path to the configuration YAML file",
+    )
+    # parser.add_argument(
+    #     "--debug-config",
+    #     default="config.yaml",
+    #     type=str,
+    #     help="Path to the configuration YAML file",
+    # )
+    args = parser.parse_args()
+
+    # omegaconf
+    config = OmegaConf.structured(SD1Config)
+    # with open("config_.yaml", "w") as f:
+    #     f.write(OmegaConf.to_yaml(config))
+    # sys.exit(0)
+    yaml_config = OmegaConf.load(args.config)
+    config = OmegaConf.merge(config, yaml_config)
+    config.run_name = f"{datetime.now().strftime('%Y_%m_%d_%H_%M_%S')}_{config.name}"
+    train_SD1(config)

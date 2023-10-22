@@ -50,7 +50,7 @@ def get_bucket_dataloader(
     pin_memory: bool = False,
     num_workers: int = 0,
     persistent_workers: bool = False,
-):
+) -> DataLoader:
     buckets = convert_to_buckets(dataset.data)
     # print({key: len(value) for key, value in buckets.items()})
     batch_sampler = BucketBatchSampler(
