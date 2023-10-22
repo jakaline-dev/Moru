@@ -24,20 +24,22 @@ if __name__ == "__main__":
         type=str,
         help="Path to the configuration YAML file",
     )
-    # parser.add_argument(
-    #     "--debug-config",
-    #     default="config.yaml",
-    #     type=str,
-    #     help="Path to the configuration YAML file",
-    # )
+    parser.add_argument(
+        "--debug-config",
+        action="store_false",
+        help="Save a default configuration YAML file",
+    )
     args = parser.parse_args()
 
     # omegaconf
     config = OmegaConf.structured(SD1Config)
-    # with open("config_.yaml", "w") as f:
-    #     f.write(OmegaConf.to_yaml(config))
-    # sys.exit(0)
+    if args.debug_config:
+        with open("config_.yaml", "w") as f:
+            f.write(OmegaConf.to_yaml(config))
+        sys.exit(0)
+
     yaml_config = OmegaConf.load(args.config)
     config = OmegaConf.merge(config, yaml_config)
+
     config.run_name = f"{datetime.now().strftime('%Y_%m_%d_%H_%M_%S')}_{config.name}"
     train_SD1(config)

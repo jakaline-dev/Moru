@@ -1,3 +1,4 @@
+import sys
 import math
 from pathlib import Path
 from PIL import Image
@@ -59,44 +60,55 @@ def preprocess_image(image_path, max_chunk=256, min_chunk=32):
     # If the image is larger than 96 chunks, resize it
     if num_chunks > max_chunk:
         ratio = (max_chunk / num_chunks) ** 0.5
-
         new_width = int(width * ratio)
         new_height = int(height * ratio)
 
-        new_width = math.ceil(new_width / 64) * 64
-        new_height = int(new_width * (height / width))
-
-        image = image.resize((new_width, new_height), Image.Resampling.BICUBIC)
-        width, height = image.size
+    else:
+        new_width = width
+        new_height = height
     # grid time
     # width = 64 * m + a
     # height = 64 * n + b
-    m: int = width // 64
-    a: int = width % 64
-    n: int = height // 64
-    b: int = height % 64
-    if a >= b and a + b <= 64:
+    m: int = new_width // 64
+    a: int = new_width % 64
+    n: int = new_height // 64
+    b: int = new_height % 64
+    # print(width, height, m, a, n, b, new_height, new_width)
+    if (a >= b and a + b <= 64 and m * n >= min_chunk) or (
+        a >= b and a + b > 64 and (m + 1) * (n + 1) > max_chunk
+    ):
         new_height = 64 * n
         new_width = int(width * new_height / height)
         grid_width = 64 * m
         grid_height = 64 * n
-    elif a < b and a + b <= 64:
+    elif (a < b and a + b <= 64 and m * n >= min_chunk) or (
+        a < b and a + b > 64 and (m + 1) * (n + 1) > max_chunk
+    ):
         new_width = 64 * m
         new_height = int(height * new_width / width)
         grid_width = 64 * m
         grid_height = 64 * n
-    elif a >= b and a + b > 64:
+    elif (a >= b and a + b > 64 and (m + 1) * (n + 1) <= max_chunk) or (
+        a >= b and a + b <= 64 and m * n < min_chunk
+    ):
         new_width = 64 * (m + 1)
         new_height = int(height * new_width / width)
         grid_width = 64 * (m + 1)
         grid_height = 64 * n
-    elif a < b and a + b < 64:
+    elif (a < b and a + b > 64 and (m + 1) * (n + 1) <= max_chunk) or (
+        a < b and a + b <= 64 and m * n < min_chunk
+    ):
         new_height = 64 * (n + 1)
         new_width = int(width * new_height / height)
         grid_width = 64 * m
         grid_height = 64 * (n + 1)
+    else:
+        print("This should not happen.")
+        sys.exit(1)
+    # print(new_height, new_width, grid_width, grid_height)
 
-    image = image.resize((new_width, new_height), Image.Resampling.BICUBIC)
+    if not (new_width == width and new_height == height):
+        image = image.resize((new_width, new_height), Image.Resampling.BICUBIC)
 
     if image.mode == "RGBA":
         # No transparency allowed in PNGs - change alpha to white

@@ -1,8 +1,7 @@
-from dataclasses import dataclass, field, replace
-from typing import Dict, Union, Optional, List
+from dataclasses import dataclass, field
+from typing import Optional, List
 from omegaconf import MISSING
-from enum import StrEnum
-from configs.BaseConfig import BaseConfig
+from configs.BaseConfig import BaseConfig, TrainerConfig
 
 
 @dataclass
@@ -24,47 +23,48 @@ class PEFTConfig:
 
 
 @dataclass
-class ModuleConfig:
-    train: bool = True
-    peft: PEFTConfig = field(default_factory=PEFTConfig)
-
-
-@dataclass
-class UNETConfig(ModuleConfig):
-    noise_offset: float = 0.0
-    snr_gamma: int = 0
-
-    def __post_init__(self):
-        if self.peft.parameters.target_modules is None:
-            self.peft.parameters.target_modules = [
-                "proj_in",
-                "proj_out",
-                "to_q",
-                "to_k",
-                "to_v",
-                "to_out.0",
-                "ff.net.0.proj",
-                "ff.net.2",
-            ]
-
-
-@dataclass
-class CLIPConfig(ModuleConfig):
+class SD1TrainerConfig(TrainerConfig):
     clip_skip: int = 1
-
-    def __post_init__(self):
-        if self.peft.parameters.target_modules is None:
-            self.peft.parameters.target_modules = [
-                "q_proj",
-                "k_proj",
-                "v_proj",
-                "out_proj",
-                "fc1",
-                "fc2",
-            ]
+    noise_offset: float = 0.0
+    min_snr: int = 0
 
 
 @dataclass
 class SD1Config(BaseConfig):
-    unet: UNETConfig = field(default_factory=UNETConfig)
-    text_encoder: CLIPConfig = field(default_factory=CLIPConfig)
+    trainer: SD1TrainerConfig = field(default_factory=SD1TrainerConfig)
+    unet_peft: Optional[List[PEFTConfig]] = field(
+        default_factory=lambda: [
+            PEFTConfig(
+                lr=0.0005,
+                parameters=LoRAConfig(
+                    target_modules=[
+                        "proj_in",
+                        "proj_out",
+                        "to_q",
+                        "to_k",
+                        "to_v",
+                        "to_out.0",
+                        "ff.net.0.proj",
+                        "ff.net.2",
+                    ]
+                ),
+            )
+        ]
+    )
+    text_encoder_peft: Optional[List[PEFTConfig]] = field(
+        default_factory=lambda: [
+            PEFTConfig(
+                lr=0.00005,
+                parameters=LoRAConfig(
+                    target_modules=[
+                        "q_proj",
+                        "k_proj",
+                        "v_proj",
+                        "out_proj",
+                        "fc1",
+                        "fc2",
+                    ]
+                ),
+            )
+        ]
+    )

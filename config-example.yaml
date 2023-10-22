@@ -1,25 +1,28 @@
 seed: 42
-name: ???
+name: #
 fabric:
   accelerator: auto
   strategy: auto
   devices: auto
   precision: bf16-true
 paths:
-  base_checkpoint_path: ???
-  train_data_path: ???
+  base_checkpoint_path: #
+  train_data_path: #
 trainer:
   grad_accum_steps: 1
   use_xformers: false
-  cache_vae_outputs: false
-  cache_te_outputs: false
+  cache_vae_outputs: true
+  cache_te_outputs: true
   max_train:
     method: epoch
     value: 10
+  clip_skip: 2
+  noise_offset: 0.05
+  min_snr: 5
 optimizer:
   name: AnyPrecisionAdamW
   init_args:
-    lr: 0.0001
+    lr: 0.0005
 lr_scheduler:
   name: cosine_with_restarts
   init_args:
@@ -48,15 +51,13 @@ logging:
     every: epoch
     value: 1
     pipeline:
-      prompt: ""
-      negative_prompt: ""
+      prompt: #
+      negative_prompt: "bad quality, worse quality"
       width: 512
       height: 512
       num_inference_steps: 20
-unet:
-  train: true
-  peft:
-    type: LoRA
+unet_peft:
+  - type: LoRA
     lr: 0.0005
     parameters:
       r: 16
@@ -74,13 +75,9 @@ unet:
       bias: none
       rank_pattern: {}
       alpha_pattern: {}
-  noise_offset: 0.0
-  snr_gamma: 0
-text_encoder:
-  train: true
-  peft:
-    type: LoRA
-    lr: 0.0005
+text_encoder_peft:
+  - type: LoRA
+    lr: 5.0e-05
     parameters:
       r: 16
       target_modules:
@@ -95,4 +92,3 @@ text_encoder:
       bias: none
       rank_pattern: {}
       alpha_pattern: {}
-  clip_skip: 1

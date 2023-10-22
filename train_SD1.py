@@ -10,10 +10,14 @@ from lightning.fabric.wrappers import _unwrap_objects
 
 from diffusers.utils.import_utils import is_xformers_available
 from diffusers import EulerDiscreteScheduler, StableDiffusionPipeline
+from diffusers.models import (
+    AutoencoderKL,
+    UNet2DConditionModel,
+)
 from diffusers.optimization import get_scheduler
 from diffusers.training_utils import compute_snr
 from diffusers.models.vae import DiagonalGaussianDistribution
-from transformers import CLIPTextModel
+from transformers import CLIPTextModel, CLIPTokenizer
 from tqdm.auto import tqdm
 
 from libs.convert_from_ckpt import (
@@ -46,16 +50,13 @@ def main(config: SD1Config):
             device=fabric.device,
         )
         noise_scheduler = pipe.scheduler
-        tokenizer = pipe.tokenizer
+        tokenizer: CLIPTokenizer = pipe.tokenizer
         text_encoder: CLIPTextModel = pipe.text_encoder
-        unet = pipe.unet
-        vae = pipe.vae
+        unet: UNet2DConditionModel = pipe.unet
+        vae: AutoencoderKL = pipe.vae
 
+    # Freeze VAE
     vae.requires_grad_(False)
-    for param in unet.parameters():
-        param.requires_grad_(False)
-    for param in text_encoder.parameters():
-        param.requires_grad_(False)
 
     if config.trainer.use_xformers and is_xformers_available():
         import xformers
@@ -81,7 +82,7 @@ def main(config: SD1Config):
         fabric.print("Caching Text Encoder outputs")
         with fabric.autocast():
             data_list = cache_te_outputs(
-                data_list, text_encoder, fabric.device, config.text_encoder.clip_skip
+                data_list, text_encoder, fabric.device, config.trainer.clip_skip
             )
 
     # Load Dataset
@@ -103,14 +104,18 @@ def main(config: SD1Config):
         raise Exception("max_train.method is either 'step' or 'epoch'")
 
     trainable_parameters = []
+    for param in unet.parameters():
+        param.requires_grad_(False)
+    for param in text_encoder.parameters():
+        param.requires_grad_(False)
     p, unet, text_encoder = get_training_parameters(config, unet, text_encoder)
     trainable_parameters += p
     optimizer = load_optimizer(config.optimizer.name)(
         trainable_parameters, **config.optimizer.init_args
     )
-    if config.unet.train:
+    if config.unet_peft:
         unet = fabric.setup(unet)
-    if config.text_encoder.train:
+    if config.text_encoder_peft:
         text_encoder = fabric.setup(text_encoder)
     optimizer = fabric.setup_optimizers(optimizer)
 
@@ -124,17 +129,25 @@ def main(config: SD1Config):
     unet.to(fabric.device)
     if not config.trainer.cache_vae_outputs:
         vae.to(fabric.device)
-    if not config.text_encoder.train and not config.trainer.cache_te_outputs:
+    if not config.text_encoder_peft and not config.trainer.cache_te_outputs:
         text_encoder.to(fabric.device)
 
     train_time = time.perf_counter()
-
     current_epoch = 0
     current_step = 0
     pbar = None
     if fabric.is_global_zero:
         pbar = tqdm(total=total_steps, desc="")
-    while True:
+    while not (
+        (
+            config.trainer.max_train.method == "epoch"
+            and current_epoch >= config.trainer.max_train.value
+        )
+        or (
+            config.trainer.max_train.method == "step"
+            and current_step >= config.trainer.max_train.value
+        )
+    ):
         current_epoch += 1
         pbar.set_description(f"Epoch {current_epoch}")
         for idx, batch in enumerate(dataloader):
@@ -154,9 +167,9 @@ def main(config: SD1Config):
                 latents *= vae.config.scaling_factor
                 # Sample noise that we'll add to the latents
                 noise = torch.randn_like(latents)
-                if config.unet.noise_offset:
+                if config.trainer.noise_offset:
                     # https://www.crosslabs.org//blog/diffusion-with-offset-noise
-                    noise += config.unet.noise_offset * torch.randn(
+                    noise += config.trainer.noise_offset * torch.randn(
                         (latents.shape[0], latents.shape[1], 1, 1), device=fabric.device
                     )
                 bsz = latents.shape[0]
@@ -180,11 +193,10 @@ def main(config: SD1Config):
                     encoder_outputs = text_encoder(
                         batch["input_ids"], output_hidden_states=True
                     )
-
                     encoder_hidden_states = text_encoder.text_model.final_layer_norm(
-                        encoder_outputs.hidden_states[
-                            -config.text_encoder.clip_skip
-                        ].to(dtype=latents.dtype)
+                        encoder_outputs.hidden_states[-config.trainer.clip_skip].to(
+                            dtype=latents.dtype
+                        )
                     )
                 # Predict the noise residual and compute loss
                 model_pred = unet(
@@ -192,7 +204,7 @@ def main(config: SD1Config):
                 ).sample
                 # del noisy_latents
                 # del encoder_hidden_states
-                if not config.unet.snr_gamma:
+                if not config.trainer.min_snr:
                     loss = F.mse_loss(model_pred, noise, reduction="mean")
                 else:
                     # Compute loss-weights as per Section 3.4 of https://arxiv.org/abs/2303.09556.
@@ -204,7 +216,7 @@ def main(config: SD1Config):
                         torch.stack(
                             [
                                 snr,
-                                config.unet.snr_gamma * torch.ones_like(timesteps),
+                                config.trainer.min_snr * torch.ones_like(timesteps),
                             ],
                             dim=1,
                         ).min(dim=1)[0]
@@ -224,7 +236,11 @@ def main(config: SD1Config):
             if not is_accumulating:
                 optimizer.step()
                 optimizer.zero_grad()
-
+            if (
+                config.trainer.max_train.method == "step"
+                and current_step >= config.trainer.max_train.value
+            ):
+                break
             if (
                 config.logging.save.every == "step"
                 and current_step % config.logging.save.value == 0
@@ -244,18 +260,13 @@ def main(config: SD1Config):
                     unet,
                     current_step,
                 )
-            if (
-                config.trainer.max_train.method == "step"
-                and current_step >= config.trainer.max_train.value
-            ):
-                return
             lr_scheduler.step()
 
         if (
             config.trainer.max_train.method == "epoch"
             and current_epoch >= config.trainer.max_train.value
         ):
-            return
+            break
         if (
             config.logging.save.every == "epoch"
             and current_epoch % config.logging.save.value == 0
@@ -276,6 +287,7 @@ def main(config: SD1Config):
                 current_epoch,
             )
     fabric.print(f"Training time: {(time.perf_counter()-train_time):.2f}s")
+    save_lora_checkpoint(config, fabric, unet, text_encoder)
     if fabric.device.type == "cuda":
         fabric.print(f"Memory used: {torch.cuda.max_memory_allocated() / 1e9:.02f} GB")
 
@@ -299,22 +311,18 @@ def sample_images(
     else:
         save_file_name = f"runs/{config.run_name}/samples/final.png"
 
-    CPU_TE = False
-
     if config.trainer.cache_vae_outputs:
         vae.to(fabric.device)
-
-    if text_encoder.device == "cpu":
-        CPU_TE = True
+    if config.trainer.cache_te_outputs:
         text_encoder.to(fabric.device)
 
     pipeline = StableDiffusionPipeline(
         tokenizer=tokenizer,
         scheduler=EulerDiscreteScheduler.from_config(noise_scheduler.config),
         text_encoder=_unwrap_objects(text_encoder)
-        if config.text_encoder.train
+        if config.text_encoder_peft
         else text_encoder,
-        unet=_unwrap_objects(unet) if config.unet.train else unet,
+        unet=_unwrap_objects(unet) if config.unet_peft else unet,
         vae=vae,
         # torch_dtype=vae.dtype,
         feature_extractor=None,
@@ -331,7 +339,7 @@ def sample_images(
         )
         image = pipeline(
             generator=generator,
-            clip_skip=config.text_encoder.clip_skip,
+            clip_skip=config.trainer.clip_skip,
             **config.logging.sample.pipeline,
         ).images[0]
         image.save(save_file_name)
@@ -340,6 +348,6 @@ def sample_images(
 
     if config.trainer.cache_vae_outputs:
         vae.to("cpu")
-    if CPU_TE:
+    if config.trainer.cache_te_outputs:
         text_encoder.to("cpu")
     torch.cuda.empty_cache()

@@ -181,3 +181,4 @@ runs/
 installer_files
 *.whl
 *.ipynb
+*.safetensors

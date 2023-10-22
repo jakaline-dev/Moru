@@ -1,3 +1,4 @@
+# Source: https://github.com/pytorch/torchdistx/blob/main/src/python/torchdistx/optimizers/anyprecision_optimizer.py
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.
 #

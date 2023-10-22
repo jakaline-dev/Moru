@@ -79,7 +79,7 @@ class LRSchedulerConfig:
 
 @dataclass
 class PreprocessConfig:
-    max_chunk: int = 64
+    max_chunk: int = 128
     min_chunk: int = 32
 
 

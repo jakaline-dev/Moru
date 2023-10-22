@@ -1,3 +1,4 @@
+# SOURCE: diffusers/huggingface, will delete when PR is fixed
 # coding=utf-8
 # Copyright 2023 The HuggingFace Inc. team.
 #
