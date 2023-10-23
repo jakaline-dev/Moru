@@ -24,10 +24,10 @@ from libs.convert_from_ckpt import (
     download_from_original_stable_diffusion_ckpt,
 )
 from libs.preprocessing import (
-    add_captions,
+    add_caption_template,
     cache_te_outputs,
     load_data,
-    captions_to_tokens,
+    cache_tokenizer_output,
     cache_vae_outputs,
 )
 from libs.dataset import MoruDataset
@@ -46,7 +46,6 @@ def main(config: SD1Config):
         pipe = download_from_original_stable_diffusion_ckpt(
             config.paths.base_checkpoint_path,
             from_safetensors=config.paths.base_checkpoint_path.endswith(".safetensors"),
-            load_safety_checker=False,
             local_files_only=True,
             device=fabric.device,
         )
@@ -81,10 +80,10 @@ def main(config: SD1Config):
     # Cache Tokenizer
     fabric.print("Caching Tokenizer")
     if config.preprocess.caption_template:
-        data_list = add_captions(
+        data_list = add_caption_template(
             data_list, config.preprocess.caption_template, name=config.name
         )
-    data_list = captions_to_tokens(data_list, tokenizer)
+    data_list = cache_tokenizer_output(data_list, tokenizer)
 
     # Cache Text Encoder output
     if config.trainer.cache_te_outputs:
@@ -314,11 +313,11 @@ def sample_images(
 ):
     # if not fabric.is_global_zero:
     #    return
-    os.makedirs(f"runs/{config.run_name}/samples", exist_ok=True)
+    os.makedirs(f"../train_results/{config.run_name}/samples", exist_ok=True)
     if current_iter:
-        save_file_name = f"runs/{config.run_name}/samples/{current_iter}_{config.logging.sample.every}.png"
+        save_file_name = f"../train_results/{config.run_name}/samples/{current_iter}_{config.logging.sample.every}.png"
     else:
-        save_file_name = f"runs/{config.run_name}/samples/final.png"
+        save_file_name = f"../train_results/{config.run_name}/samples/final.png"
 
     if config.trainer.cache_vae_outputs:
         vae.to(fabric.device)

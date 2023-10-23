@@ -1,4 +1,4 @@
-# SOURCE: diffusers/huggingface, will delete when PR is fixed
+# SOURCE: diffusers/huggingface
 # coding=utf-8
 # Copyright 2023 The HuggingFace Inc. team.
 #
@@ -59,9 +59,6 @@ from diffusers.pipelines.latent_diffusion.pipeline_latent_diffusion import (
 )
 from diffusers.pipelines.paint_by_example import PaintByExampleImageEncoder
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline
-from diffusers.pipelines.stable_diffusion.safety_checker import (
-    StableDiffusionSafetyChecker,
-)
 from diffusers.pipelines.stable_diffusion.stable_unclip_image_normalizer import (
     StableUnCLIPImageNormalizer,
 )
@@ -1424,7 +1421,7 @@ def download_from_original_stable_diffusion_ckpt(
     stable_unclip_prior: Optional[str] = None,
     clip_stats_path: Optional[str] = None,
     controlnet: Optional[bool] = None,
-    load_safety_checker: bool = True,
+    load_safety_checker: bool = False,
     pipeline_class: DiffusionPipeline = None,
     local_files_only=False,
     vae_path=None,
@@ -1931,19 +1928,8 @@ def download_from_original_stable_diffusion_ckpt(
             if tokenizer is None
             else tokenizer
         )
-
-        if load_safety_checker:
-            safety_checker = StableDiffusionSafetyChecker.from_pretrained(
-                "CompVis/stable-diffusion-safety-checker",
-                local_files_only=local_files_only,
-            )
-            feature_extractor = AutoFeatureExtractor.from_pretrained(
-                "CompVis/stable-diffusion-safety-checker",
-                local_files_only=local_files_only,
-            )
-        else:
-            safety_checker = None
-            feature_extractor = None
+        safety_checker = None
+        feature_extractor = None
 
         if controlnet:
             pipe = pipeline_class(

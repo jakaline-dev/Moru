@@ -24,7 +24,7 @@ set TEMP=%cd%\installer_files
 set INSTALL_DIR=%cd%\installer_files
 set CONDA_ROOT_PREFIX=%cd%\installer_files\conda
 set INSTALL_ENV_DIR=%cd%\installer_files\env
-set MINICONDA_DOWNLOAD_URL=https://repo.anaconda.com/miniconda/Miniconda3-py311_23.5.2-0-Windows-x86_64.exe
+set MINICONDA_DOWNLOAD_URL=https://repo.anaconda.com/miniconda/Miniconda3-py311_23.9.0-0-Windows-x86_64.exe
 set conda_exists=F
 
 @rem figure out whether git and conda needs to be installed
@@ -66,27 +66,19 @@ set "CUDA_HOME=%CUDA_PATH%"
 @rem activate installer env
 call "%CONDA_ROOT_PREFIX%\condabin\conda.bat" activate "%INSTALL_ENV_DIR%" || ( echo. && echo Miniconda hook not found. && goto end )
 
-@rem update conda
-:: conda update -n base -c defaults conda --yes
-@rem git pull --autostash
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
-python -m pip install -r requirements.txt --upgrade
-if %ERRORLEVEL% neq 0 (
-	echo Error updating.
-	pause
-	exit /b %ERRORLEVEL%
-)
+@rem setup installer env
+call python one_click.py %*
+
+@rem below are functions for the script   next line skips these during normal execution
+goto end
+
+:PrintBigMessage
+echo. && echo.
+echo *******************************************************************
+for %%M in (%*) do echo * %%~M
+echo *******************************************************************
+echo. && echo.
+exit /b
+
+:end
 pause
-
-@REM @rem below are functions for the script   next line skips these during normal execution
-@REM goto end
-
-@REM :PrintBigMessage
-@REM echo. && echo.
-@REM echo *******************************************************************
-@REM for %%M in (%*) do echo * %%~M
-@REM echo *******************************************************************
-@REM echo. && echo.
-@REM exit /b
-
-@REM :end

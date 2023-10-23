@@ -177,7 +177,7 @@ pyrightconfig.json
 
 .vscode/
 config.yaml
-runs/
+train_results/
 installer_files
 *.whl
 *.ipynb

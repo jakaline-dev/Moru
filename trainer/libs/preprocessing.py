@@ -120,20 +120,20 @@ def preprocess_image(image_path, max_chunk=256, min_chunk=32):
     return image, (grid_width, grid_height)
 
 
-def add_captions(data, caption_list, name=None):
+def add_caption_template(data, caption_list, name=None):
+    if len(caption_list) == 0:
+        return data
     for entry in data:
-        select_caption = None
-        if entry["caption"]:
-            select_caption = entry[
-                "caption"
-            ]  # if type(entry['caption']) is str else entry['caption']
-        entry["input_ids"] = random.choice(caption_list).format(
-            caption=select_caption, name=name
-        )
+        entry["caption"] = [
+            x.format(caption=entry["caption"] if entry["caption"] else None, name=name)
+            for x in caption_list
+        ]
+        if len(entry["caption"]) == 1:
+            entry["caption"] = entry["caption"][0]
     return data
 
 
-def captions_to_tokens(data, tokenizer):
+def cache_tokenizer_output(data, tokenizer):
     if not tokenizer:
         tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-large-patch14")
     input_ids = tokenizer(

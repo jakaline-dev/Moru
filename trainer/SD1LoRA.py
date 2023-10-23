@@ -64,9 +64,9 @@ def save_lora_checkpoint(config, fabric, unet, text_encoder, current_iter=None):
         )
 
     # Save diffusers
-    os.makedirs(f"runs/{config.run_name}/output_diffusers", exist_ok=True)
+    os.makedirs(f"../train_results/{config.run_name}/output_diffusers", exist_ok=True)
     StableDiffusionPipeline.save_lora_weights(
-        save_directory=f"runs/{config.run_name}/output_diffusers/",
+        save_directory=f"../train_results/{config.run_name}/output_diffusers/",
         weight_name=save_file_name,
         unet_lora_layers=unet_lora_state_dict,
         text_encoder_lora_layers=te_lora_state_dict,
@@ -74,7 +74,7 @@ def save_lora_checkpoint(config, fabric, unet, text_encoder, current_iter=None):
         is_main_process=fabric.is_global_zero,
     )
     # Save kohya
-    os.makedirs(f"runs/{config.run_name}/output_kohya_ss", exist_ok=True)
+    os.makedirs(f"../train_results/{config.run_name}/output_kohya_ss", exist_ok=True)
     kohya_ss_state_dict = {}
     if unet_lora_state_dict:
         kohya_ss_state_dict |= get_module_kohya_state_dict(
@@ -87,5 +87,6 @@ def save_lora_checkpoint(config, fabric, unet, text_encoder, current_iter=None):
             text_encoder.peft_config["default"].lora_alpha,
         )
     save_file(
-        kohya_ss_state_dict, f"runs/{config.run_name}/output_kohya_ss/{save_file_name}"
+        kohya_ss_state_dict,
+        f"../train_results/{config.run_name}/output_kohya_ss/{save_file_name}",
     )
