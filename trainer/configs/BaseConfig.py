@@ -15,6 +15,7 @@ class StepOrEpoch(StrEnum):
 class PathConfig:
     base_checkpoint_path: str = MISSING
     train_data_path: str = MISSING
+    validation_path: str = MISSING
 
 
 @dataclass
@@ -29,14 +30,14 @@ class FabricConfig:
 class MaxTrainConfig:
     method: StepOrEpoch = "epoch"
     value: int = 10
-    output_diffusers: bool = False
-    output_kohya_ss: bool = True
 
 
 @dataclass
 class SaveConfig:
     every: StepOrEpoch = "epoch"
     value: int = 1
+    output_diffusers: bool = False
+    output_kohya_ss: bool = True
 
 
 @dataclass

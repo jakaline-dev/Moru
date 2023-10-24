@@ -4,7 +4,7 @@ import torch
 from diffusers import StableDiffusionPipeline
 from libs.convert_LoRA import get_module_kohya_state_dict
 from lightning.fabric.wrappers import _unwrap_objects
-from peft import LoraConfig
+from peft import LoraConfig, get_peft_model
 from peft.utils import get_peft_model_state_dict
 from safetensors.torch import save_file
 
@@ -33,27 +33,51 @@ def replace_module(model, name, new_module):
     setattr(sub_model, name_parts[-1], new_module)
 
 
+def print_trainable_parameters(model):
+    def format_large_number(num):
+        if num >= 10**9:  # Billions
+            return "{:.2f}B".format(num / 10**9)
+        elif num >= 10**6:  # Millions
+            return "{:.2f}M".format(num / 10**6)
+        elif num >= 10**3:  # Millions
+            return "{:.2f}K".format(num / 10**3)
+        else:
+            return str(num)
+
+    """
+    Prints the number of trainable parameters in the model.
+    """
+    trainable_params = 0
+    all_param = 0
+    for _, param in model.named_parameters():
+        all_param += param.numel()
+        if param.requires_grad:
+            trainable_params += param.numel()
+    print(
+        f"trainable params: {format_large_number(trainable_params)} || all params: {format_large_number(all_param)} || trainable%: {100 * trainable_params / all_param}%"
+    )
+
+
 def get_training_parameters_lora(config, unet, text_encoder):
     parameters = []
     if config.unet_peft:
         for unet_peft in config.unet_peft:
             unet_lora_config = LoraConfig(**unet_peft.parameters)
             unet.add_adapter(unet_lora_config)
+            # unet_lora_layer_names = list(get_peft_model(unet, unet_lora_config).keys())
+            params = get_peft_model(unet, unet_lora_config).parameters()
+            print_trainable_parameters(unet)
             parameters += [
-                {
-                    "params": get_peft_model_state_dict(unet).values(),
-                    "lr": unet_peft.lr,
-                },
+                {"params": params, "lr": unet_peft.lr, "weight_decay": 0.0},
             ]
     if config.text_encoder_peft:
         for te_peft in config.text_encoder_peft:
             te_lora_config = LoraConfig(**te_peft.parameters)
             text_encoder.add_adapter(te_lora_config)
+            params = get_peft_model(text_encoder, te_lora_config).parameters()
+            print_trainable_parameters(unet)
             parameters += [
-                {
-                    "params": get_peft_model_state_dict(text_encoder).values(),
-                    "lr": te_peft.lr,
-                },
+                {"params": params, "lr": te_peft.lr, "weight_decay": 0.0},
             ]
     return parameters, unet, text_encoder
 
