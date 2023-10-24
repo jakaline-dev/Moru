@@ -1,9 +1,10 @@
-import torch
 import argparse
 import sys
 from datetime import datetime
-from omegaconf import OmegaConf
+
+import torch
 from configs.SD1Config import SD1Config
+from omegaconf import OmegaConf
 from train_SD1 import main as train_SD1
 
 if __name__ == "__main__":

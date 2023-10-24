@@ -1,4 +1,5 @@
 import random
+
 import torch
 from torch.utils.data import Dataset
 from torchvision.transforms import v2
@@ -57,6 +58,11 @@ class MoruDataset(Dataset):
                 entry["input_ids"] = random.choice(entry["input_ids"])
             available_keys.append("input_ids")
         else:
+            if len(entry["input_ids"].shape) > 1:
+                entry["caption"] == random.choice(entry["caption"])
+            # , == 267
+            if self.shuffle_tags:
+                pass
             entry["input_ids"] = self.tokenizer(
                 entry["caption"],
                 padding=True,

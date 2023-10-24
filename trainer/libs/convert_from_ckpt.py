@@ -22,23 +22,20 @@ from typing import Dict, Optional, Union
 
 import requests
 import torch
-from transformers import (
-    AutoFeatureExtractor,
-    BertTokenizerFast,
-    CLIPImageProcessor,
-    CLIPTextConfig,
-    CLIPTextModel,
-    CLIPTextModelWithProjection,
-    CLIPTokenizer,
-    CLIPVisionConfig,
-    CLIPVisionModelWithProjection,
-)
-
 from diffusers.models import (
     AutoencoderKL,
     ControlNetModel,
     PriorTransformer,
     UNet2DConditionModel,
+)
+from diffusers.pipelines.latent_diffusion.pipeline_latent_diffusion import (
+    LDMBertConfig,
+    LDMBertModel,
+)
+from diffusers.pipelines.paint_by_example import PaintByExampleImageEncoder
+from diffusers.pipelines.pipeline_utils import DiffusionPipeline
+from diffusers.pipelines.stable_diffusion.stable_unclip_image_normalizer import (
+    StableUnCLIPImageNormalizer,
 )
 from diffusers.schedulers import (
     DDIMScheduler,
@@ -53,16 +50,17 @@ from diffusers.schedulers import (
 )
 from diffusers.utils import is_accelerate_available, is_omegaconf_available, logging
 from diffusers.utils.import_utils import BACKENDS_MAPPING
-from diffusers.pipelines.latent_diffusion.pipeline_latent_diffusion import (
-    LDMBertConfig,
-    LDMBertModel,
+from transformers import (
+    AutoFeatureExtractor,
+    BertTokenizerFast,
+    CLIPImageProcessor,
+    CLIPTextConfig,
+    CLIPTextModel,
+    CLIPTextModelWithProjection,
+    CLIPTokenizer,
+    CLIPVisionConfig,
+    CLIPVisionModelWithProjection,
 )
-from diffusers.pipelines.paint_by_example import PaintByExampleImageEncoder
-from diffusers.pipelines.pipeline_utils import DiffusionPipeline
-from diffusers.pipelines.stable_diffusion.stable_unclip_image_normalizer import (
-    StableUnCLIPImageNormalizer,
-)
-
 
 if is_accelerate_available():
     from accelerate import init_empty_weights

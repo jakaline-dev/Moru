@@ -1,12 +1,11 @@
 import sys
-import math
 from pathlib import Path
-from PIL import Image
-from tqdm.auto import tqdm
+
 import torch
+from PIL import Image
 from torchvision.transforms import v2
+from tqdm.auto import tqdm
 from transformers import CLIPTokenizer
-import random
 
 
 def load_data(img_folder, max_chunk=256, min_chunk=32):

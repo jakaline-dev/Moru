@@ -1,6 +1,7 @@
 import random
-from torch.utils.data import DataLoader, BatchSampler
 from collections import defaultdict
+
+from torch.utils.data import BatchSampler, DataLoader
 
 
 class BucketBatchSampler(BatchSampler):

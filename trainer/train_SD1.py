@@ -1,41 +1,36 @@
 import os
 import time
-import torch
-import torch.nn.functional as F
 
 import lightning as L
-from lightning.fabric import Fabric
-from lightning.pytorch.utilities.seed import isolate_rng
-from lightning.fabric.wrappers import _unwrap_objects
-
-from diffusers.utils.import_utils import is_xformers_available
+import torch
+import torch.nn.functional as F
+from configs.SD1Config import SD1Config
 from diffusers import EulerDiscreteScheduler, StableDiffusionPipeline
-from diffusers.models import (
-    AutoencoderKL,
-    UNet2DConditionModel,
-)
+from diffusers.models import AutoencoderKL, UNet2DConditionModel
+from diffusers.models.vae import DiagonalGaussianDistribution
 from diffusers.optimization import get_scheduler
 from diffusers.training_utils import compute_snr
-from diffusers.models.vae import DiagonalGaussianDistribution
-from transformers import CLIPTextModel, CLIPTokenizer
-from tqdm.auto import tqdm
-
-from libs.convert_from_ckpt import (
-    download_from_original_stable_diffusion_ckpt,
-)
+from diffusers.utils.import_utils import is_xformers_available
+from libs.bucket_dataloader import get_bucket_dataloader
+from libs.convert_from_ckpt import download_from_original_stable_diffusion_ckpt
+from libs.dataset import MoruDataset
 from libs.preprocessing import (
     add_caption_template,
     cache_te_outputs,
-    load_data,
     cache_tokenizer_output,
     cache_vae_outputs,
+    load_data,
 )
-from libs.dataset import MoruDataset
-from libs.bucket_dataloader import get_bucket_dataloader
-from libs.utils import load_optimizer
-
-from configs.SD1Config import SD1Config
-from SD1LoRA import get_training_parameters, save_lora_checkpoint
+from libs.utils import (
+    get_training_parameters_lora,
+    load_optimizer,
+    save_checkpoint_lora,
+)
+from lightning.fabric import Fabric
+from lightning.fabric.wrappers import _unwrap_objects
+from lightning.pytorch.utilities.seed import isolate_rng
+from tqdm.auto import tqdm
+from transformers import CLIPTextModel, CLIPTokenizer
 
 
 def main(config: SD1Config):
@@ -59,8 +54,6 @@ def main(config: SD1Config):
     vae.requires_grad_(False)
 
     if config.trainer.use_xformers and is_xformers_available():
-        import xformers
-
         unet.enable_xformers_memory_efficient_attention()
         print("xformers enabled!")
 
@@ -116,7 +109,7 @@ def main(config: SD1Config):
         param.requires_grad_(False)
     for param in text_encoder.parameters():
         param.requires_grad_(False)
-    p, unet, text_encoder = get_training_parameters(config, unet, text_encoder)
+    p, unet, text_encoder = get_training_parameters_lora(config, unet, text_encoder)
     trainable_parameters += p
     optimizer = load_optimizer(config.optimizer.name)(
         trainable_parameters, **config.optimizer.init_args
@@ -250,11 +243,6 @@ def main(config: SD1Config):
             ):
                 break
             if (
-                config.logging.save.every == "step"
-                and current_step % config.logging.save.value == 0
-            ):
-                save_lora_checkpoint(config, fabric, unet, text_encoder, current_step)
-            if (
                 config.logging.sample.every == "step"
                 and current_step % config.logging.sample.value == 0
             ):
@@ -268,18 +256,17 @@ def main(config: SD1Config):
                     unet,
                     current_step,
                 )
+            if (
+                config.logging.save.every == "step"
+                and current_step % config.logging.save.value == 0
+            ):
+                save_checkpoint_lora(config, fabric, unet, text_encoder, current_step)
             lr_scheduler.step()
-
         if (
             config.trainer.max_train.method == "epoch"
             and current_epoch >= config.trainer.max_train.value
         ):
             break
-        if (
-            config.logging.save.every == "epoch"
-            and current_epoch % config.logging.save.value == 0
-        ):
-            save_lora_checkpoint(config, fabric, unet, text_encoder, current_epoch)
         if (
             config.logging.sample.every == "epoch"
             and current_epoch % config.logging.sample.value == 0
@@ -294,8 +281,14 @@ def main(config: SD1Config):
                 unet,
                 current_epoch,
             )
+
+        if (
+            config.logging.save.every == "epoch"
+            and current_epoch % config.logging.save.value == 0
+        ):
+            save_checkpoint_lora(config, fabric, unet, text_encoder, current_epoch)
     fabric.print(f"Training time: {(time.perf_counter()-train_time):.2f}s")
-    save_lora_checkpoint(config, fabric, unet, text_encoder)
+    save_checkpoint_lora(config, fabric, unet, text_encoder)
     if fabric.device.type == "cuda":
         fabric.print(f"Memory used: {torch.cuda.max_memory_allocated() / 1e9:.02f} GB")
 

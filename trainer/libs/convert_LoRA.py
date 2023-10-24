@@ -1,8 +1,8 @@
 # SOURCE: https://github.com/huggingface/peft/blob/main/examples/lora_dreambooth/convert_peft_sd_lora_to_kohya_ss.py
 
 from typing import Dict
-import torch
 
+import torch
 
 # Default kohya_ss LoRA replacement modules
 # https://github.com/kohya-ss/sd-scripts/blob/c924c47f374ac1b6e33e71f82948eb1853e2243f/networks/lora.py#L664

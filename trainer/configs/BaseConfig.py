@@ -1,7 +1,8 @@
-from dataclasses import dataclass, field, replace
-from typing import Dict, Union, Optional, List
-from omegaconf import MISSING
+from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Dict, List, Optional, Union
+
+from omegaconf import MISSING
 
 
 class StepOrEpoch(StrEnum):
@@ -28,6 +29,8 @@ class FabricConfig:
 class MaxTrainConfig:
     method: StepOrEpoch = "epoch"
     value: int = 10
+    output_diffusers: bool = False
+    output_kohya_ss: bool = True
 
 
 @dataclass

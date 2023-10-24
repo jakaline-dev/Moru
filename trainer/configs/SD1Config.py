@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
-from typing import Optional, List
-from omegaconf import MISSING
+from typing import List, Optional
+
 from configs.BaseConfig import BaseConfig, TrainerConfig
 
 
