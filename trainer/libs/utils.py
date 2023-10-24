@@ -41,7 +41,7 @@ def get_training_parameters_lora(config, unet, text_encoder):
             unet.add_adapter(unet_lora_config)
             parameters += [
                 {
-                    "params": [p for _, p in get_peft_model_state_dict(unet)],
+                    "params": get_peft_model_state_dict(unet).values(),
                     "lr": unet_peft.lr,
                 },
             ]
@@ -51,7 +51,7 @@ def get_training_parameters_lora(config, unet, text_encoder):
             text_encoder.add_adapter(te_lora_config)
             parameters += [
                 {
-                    "params": [p for _, p in get_peft_model_state_dict(text_encoder)],
+                    "params": get_peft_model_state_dict(text_encoder).values(),
                     "lr": te_peft.lr,
                 },
             ]
