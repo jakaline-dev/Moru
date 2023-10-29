@@ -53,6 +53,13 @@ def main(config: SD1Config):
     # Freeze VAE
     vae.requires_grad_(False)
 
+    # gradient checkpointing
+    if config.trainer.gradient_checkpointing:
+        unet.train()
+        unet.enable_gradient_checkpointing()
+        text_encoder.gradient_checkpointing_enable()
+
+    # xformers
     if config.trainer.use_xformers and is_xformers_available():
         unet.enable_xformers_memory_efficient_attention()
         print("xformers enabled!")
@@ -64,6 +71,7 @@ def main(config: SD1Config):
         min_chunk=config.preprocess.min_chunk,
     )
     assert len(data_list) > 0, "Empty folder or incorrect path"
+
     # Cache VAE latent output
     if config.trainer.cache_vae_outputs:
         fabric.print("Caching VAE outputs")
@@ -152,7 +160,6 @@ def main(config: SD1Config):
         current_epoch += 1
         pbar.set_description(f"Epoch {current_epoch}")
         for idx, batch in enumerate(dataloader):
-            current_step += 1
             is_accumulating = (idx + 1) % config.trainer.grad_accum_steps != 0
             with fabric.autocast():
                 if "latent_values" in batch:
@@ -230,38 +237,42 @@ def main(config: SD1Config):
                     )
                     loss = loss.mean()
 
-            if pbar is not None:
-                pbar.update(1)
-                # pbar.set_postfix(loss = loss.item())
             fabric.backward(loss / config.trainer.grad_accum_steps)
             if not is_accumulating:
                 optimizer.step()
                 optimizer.zero_grad()
-            if (
-                config.trainer.max_train.method == "step"
-                and current_step >= config.trainer.max_train.value
-            ):
-                break
-            if (
-                config.logging.sample.every == "step"
-                and current_step % config.logging.sample.value == 0
-            ):
-                sample_images(
-                    config,
-                    fabric,
-                    tokenizer,
-                    noise_scheduler,
-                    text_encoder,
-                    vae,
-                    unet,
-                    current_step,
-                )
-            if (
-                config.logging.save.every == "step"
-                and current_step % config.logging.save.value == 0
-            ):
-                save_checkpoint_lora(config, fabric, unet, text_encoder, current_step)
-            lr_scheduler.step()
+                current_step += 1
+                lr_scheduler.step()
+                if pbar is not None:
+                    pbar.update(1)
+                    # pbar.set_postfix(loss = loss.item())
+                if (
+                    config.trainer.max_train.method == "step"
+                    and current_step >= config.trainer.max_train.value
+                ):
+                    break
+                if (
+                    config.logging.sample.every == "step"
+                    and current_step % config.logging.sample.value == 0
+                ):
+                    sample_images(
+                        config,
+                        fabric,
+                        tokenizer,
+                        noise_scheduler,
+                        text_encoder,
+                        vae,
+                        unet,
+                        current_step,
+                    )
+                if (
+                    config.logging.save.every == "step"
+                    and current_step % config.logging.save.value == 0
+                ):
+                    save_checkpoint_lora(
+                        config, fabric, unet, text_encoder, current_step
+                    )
+
         if (
             config.trainer.max_train.method == "epoch"
             and current_epoch >= config.trainer.max_train.value

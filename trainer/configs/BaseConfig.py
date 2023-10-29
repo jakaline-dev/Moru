@@ -59,6 +59,7 @@ class SampleConfig:
 @dataclass
 class TrainerConfig:
     grad_accum_steps: int = 1
+    gradient_checkpointing: bool = True
     use_xformers: bool = False
     cache_vae_outputs: bool = False
     cache_te_outputs: bool = False

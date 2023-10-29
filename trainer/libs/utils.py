@@ -66,6 +66,7 @@ def get_training_parameters_lora(config, unet, text_encoder):
             unet.add_adapter(unet_lora_config)
             # unet_lora_layer_names = list(get_peft_model(unet, unet_lora_config).keys())
             params = get_peft_model(unet, unet_lora_config).parameters()
+            print("U-NET trainable parameters:")
             print_trainable_parameters(unet)
             parameters += [
                 {"params": params, "lr": unet_peft.lr, "weight_decay": 0.0},
@@ -75,7 +76,8 @@ def get_training_parameters_lora(config, unet, text_encoder):
             te_lora_config = LoraConfig(**te_peft.parameters)
             text_encoder.add_adapter(te_lora_config)
             params = get_peft_model(text_encoder, te_lora_config).parameters()
-            print_trainable_parameters(unet)
+            print("Text Encoder trainable parameters:")
+            print_trainable_parameters(text_encoder)
             parameters += [
                 {"params": params, "lr": te_peft.lr, "weight_decay": 0.0},
             ]

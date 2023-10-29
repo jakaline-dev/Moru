@@ -31,6 +31,7 @@ class MoruDataset(Dataset):
         entry = self.data[idx]
         available_keys = []
         if "latent_values" not in entry:
+            print(entry["image"].size, entry["grid_height"], entry["grid_width"])
             tfs = v2.Compose(
                 [
                     v2.RandomCrop([entry["grid_height"], entry["grid_width"]])

@@ -137,11 +137,14 @@ def cache_tokenizer_output(data, tokenizer):
         tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-large-patch14")
     input_ids = tokenizer(
         [entry["caption"] for entry in data],
-        padding=True,
+        padding="max_length",
+        truncation=True,
         return_tensors="pt",
-        pad_to_multiple_of=tokenizer.model_max_length,
     ).input_ids
-
+    # TODO:
+    # 1. Tokenize everything with padding=True (No truncation)
+    # 2. After putting individual entries, truncate to 77 if length <= 77
+    # 3. On batch collate, Add padding for the longer sequence
     for i, entry in enumerate(data):
         entry["input_ids"] = input_ids[i]
     return data
@@ -153,7 +156,7 @@ def cache_vae_outputs(data_list, vae, device):
     for entry in tqdm(data_list):
         tfs = v2.Compose(
             [
-                v2.CenterCrop((entry["grid_width"], entry["grid_height"])),
+                v2.CenterCrop((entry["grid_height"], entry["grid_width"])),
                 v2.ToImage(),
                 v2.ToDtype(torch.get_default_dtype(), scale=True),
                 v2.Normalize([0.5], [0.5]),
