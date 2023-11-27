@@ -1,9 +1,9 @@
 import argparse
 import sys
-from datetime import datetime
 
 import torch
 from configs.SD1Config import SD1Config
+from libs.check_config import check_config
 from omegaconf import OmegaConf
 from train_SD1 import main as train_SD1
 
@@ -42,6 +42,5 @@ if __name__ == "__main__":
 
     yaml_config = OmegaConf.load(args.config)
     config = OmegaConf.merge(config, yaml_config)
-
-    config.run_name = f"{datetime.now().strftime('%Y_%m_%d_%H_%M_%S')}_{config.name}"
+    config = check_config(config)
     train_SD1(config)

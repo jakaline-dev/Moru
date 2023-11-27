@@ -58,30 +58,68 @@ def print_trainable_parameters(model):
     )
 
 
-def get_training_parameters_lora(config, unet, text_encoder):
-    parameters = []
-    if config.unet_peft:
-        for unet_peft in config.unet_peft:
-            unet_lora_config = LoraConfig(**unet_peft.parameters)
-            unet.add_adapter(unet_lora_config)
-            # unet_lora_layer_names = list(get_peft_model(unet, unet_lora_config).keys())
-            params = get_peft_model(unet, unet_lora_config).parameters()
-            print("U-NET trainable parameters:")
-            print_trainable_parameters(unet)
-            parameters += [
-                {"params": params, "lr": unet_peft.lr, "weight_decay": 0.0},
-            ]
-    if config.text_encoder_peft:
-        for te_peft in config.text_encoder_peft:
-            te_lora_config = LoraConfig(**te_peft.parameters)
-            text_encoder.add_adapter(te_lora_config)
-            params = get_peft_model(text_encoder, te_lora_config).parameters()
-            print("Text Encoder trainable parameters:")
-            print_trainable_parameters(text_encoder)
-            parameters += [
-                {"params": params, "lr": te_peft.lr, "weight_decay": 0.0},
-            ]
-    return parameters, unet, text_encoder
+def init_textual_inversion(config, tokenizer, text_encoder):
+    # Add the placeholder token in tokenizer
+    placeholder_tokens = [config.textual_inversion.placeholder_token]
+
+    # add dummy tokens for multi-vector
+    additional_tokens = []
+    for i in range(1, config.textual_inversion.num_vectors):
+        additional_tokens.append(f"{config.textual_inversion.placeholder_token}_{i}")
+    placeholder_tokens += additional_tokens
+
+    num_added_tokens = tokenizer.add_tokens(placeholder_tokens)
+    if num_added_tokens != config.textual_inversion.num_vectors:
+        raise ValueError(
+            f"The tokenizer already contains the token {config.textual_inversion.placeholder_token}. Please pass a different"
+            " `placeholder_token` that is not already in the tokenizer."
+        )
+
+    # Convert the initializer_token, placeholder_token to ids
+    token_ids = tokenizer.encode(
+        config.textual_inversion.initializer_token, add_special_tokens=False
+    )
+    # Check if initializer_token is a single token or a sequence of tokens
+    if len(token_ids) > 1:
+        raise ValueError("The initializer token must be a single token.")
+
+    initializer_token_id = token_ids[0]
+    placeholder_token_ids = tokenizer.convert_tokens_to_ids(placeholder_tokens)
+
+    # Resize the token embeddings as we are adding new special tokens to the tokenizer
+    text_encoder.resize_token_embeddings(len(tokenizer))
+
+    # Initialise the newly added placeholder token with the embeddings of the initializer token
+    token_embeds = text_encoder.get_input_embeddings().weight.data
+    with torch.no_grad():
+        for token_id in placeholder_token_ids:
+            token_embeds[token_id] = token_embeds[initializer_token_id].clone()
+    return placeholder_token_ids, tokenizer, text_encoder
+
+
+def get_unet_lora_parameters(config, unet):
+    unet_lora_config = LoraConfig(**config.unet_peft.parameters)
+    unet.add_adapter(unet_lora_config)
+    # unet_lora_layer_names = list(get_peft_model(unet, unet_lora_config).keys())
+    params = get_peft_model(unet, unet_lora_config).parameters()
+    print("U-NET trainable parameters:")
+    print_trainable_parameters(unet)
+    parameters = [
+        {"params": params, "lr": config.unet_peft.lr, "weight_decay": 0.0},
+    ]
+    return parameters, unet
+
+
+def get_te_lora_parameters(config, text_encoder):
+    te_lora_config = LoraConfig(**config.te_peft.parameters)
+    text_encoder.add_adapter(te_lora_config)
+    params = get_peft_model(text_encoder, te_lora_config).parameters()
+    print("Text Encoder trainable parameters:")
+    print_trainable_parameters(text_encoder)
+    parameters = [
+        {"params": params, "lr": config.te_peft.lr, "weight_decay": 0.0},
+    ]
+    return parameters, text_encoder
 
 
 def save_checkpoint_lora(config, fabric, unet, text_encoder, current_iter=None):

@@ -1,10 +1,8 @@
 # SOURCE: https://github.com/oobabooga/text-generation-webui
 import argparse
-import glob
 import hashlib
 import os
 import platform
-import re
 import site
 import subprocess
 import sys
@@ -231,7 +229,7 @@ def install_webui():
         # else:
         #     print("CUDA: 12.1")
 
-        install_pytorch = f"python -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121"
+        install_pytorch = "python -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121"
     elif not is_macos() and choice == "B":
         if is_linux():
             install_pytorch = "python -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm5.6"
@@ -326,22 +324,22 @@ def update_requirements(initial_installation=False):
     os.remove("temp_requirements.txt")
 
     # Check for '+cu' or '+rocm' in version string to determine if torch uses CUDA or ROCm. Check for pytorch-cuda as well for backwards compatibility
-    if (
-        not any((is_cuda, is_rocm))
-        and run_cmd(
-            "conda list -f pytorch-cuda | grep pytorch-cuda",
-            environment=True,
-            capture_output=True,
-        ).returncode
-        == 1
-    ):
-        clear_cache()
-        return
+    # if (
+    #     not any((is_cuda, is_rocm))
+    #     and run_cmd(
+    #         "conda list -f pytorch-cuda | grep pytorch-cuda",
+    #         environment=True,
+    #         capture_output=True,
+    #     ).returncode
+    #     == 1
+    # ):
+    #     clear_cache()
+    #     return
 
-    if not os.path.exists("repositories/"):
-        os.mkdir("repositories")
+    # if not os.path.exists("repositories/"):
+    #     os.mkdir("repositories")
 
-    os.chdir("repositories")
+    # os.chdir("repositories")
 
     clear_cache()
 

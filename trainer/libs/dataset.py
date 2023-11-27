@@ -6,6 +6,19 @@ from torchvision.transforms import v2
 from transformers import CLIPTokenizer
 
 
+class Gridify(torch.nn.Module):
+    def forward(
+        self, img, bboxes, label
+    ):  # we assume inputs are always structured like this
+        print(
+            f"I'm transforming an image of shape {img.shape} "
+            f"with bboxes = {bboxes}\n{label = }"
+        )
+
+        # Do some transformations. Here, we're just passing though the input
+        return img, bboxes, label
+
+
 class MoruDataset(Dataset):
     def __init__(
         self,
@@ -31,7 +44,7 @@ class MoruDataset(Dataset):
         entry = self.data[idx]
         available_keys = []
         if "latent_values" not in entry:
-            print(entry["image"].size, entry["grid_height"], entry["grid_width"])
+            # print(entry["image"].size, entry["grid_height"], entry["grid_width"])
             tfs = v2.Compose(
                 [
                     v2.RandomCrop([entry["grid_height"], entry["grid_width"]])

@@ -22,7 +22,9 @@ from libs.preprocessing import (
     load_data,
 )
 from libs.utils import (
-    get_training_parameters_lora,
+    get_te_lora_parameters,
+    get_unet_lora_parameters,
+    init_textual_inversion,
     load_optimizer,
     save_checkpoint_lora,
 )
@@ -50,8 +52,13 @@ def main(config: SD1Config):
         unet: UNet2DConditionModel = pipe.unet
         vae: AutoencoderKL = pipe.vae
 
-    # Freeze VAE
-    vae.requires_grad_(False)
+    # Freeze All
+    for param in vae.parameters():
+        param.requires_grad_(False)
+    for param in unet.parameters():
+        param.requires_grad_(False)
+    for param in text_encoder.parameters():
+        param.requires_grad_(False)
 
     # gradient checkpointing
     if config.trainer.gradient_checkpointing:
@@ -113,18 +120,26 @@ def main(config: SD1Config):
         raise Exception("max_train.method is either 'step' or 'epoch'")
 
     trainable_parameters = []
-    for param in unet.parameters():
-        param.requires_grad_(False)
-    for param in text_encoder.parameters():
-        param.requires_grad_(False)
-    p, unet, text_encoder = get_training_parameters_lora(config, unet, text_encoder)
-    trainable_parameters += p
+
+    if config.textual_inversion:
+        placeholder_token_ids, tokenizer, text_encoder = init_textual_inversion(
+            config, tokenizer, text_encoder
+        )
+
+    if config.unet_peft:
+        unet_peft_params, unet = get_unet_lora_parameters(config, unet)
+        trainable_parameters += unet_peft_params
+
+    if config.text_encoder_peft:
+        te_peft_params, text_encoder = get_te_lora_parameters(config, text_encoder)
+        trainable_parameters += te_peft_params
+
     optimizer = load_optimizer(config.optimizer.name)(
         trainable_parameters, **config.optimizer.init_args
     )
-    if config.unet_peft:
+    if config.is_train_unet:
         unet = fabric.setup(unet)
-    if config.text_encoder_peft:
+    if config.is_train_text_encoder:
         text_encoder = fabric.setup(text_encoder)
     optimizer = fabric.setup_optimizers(optimizer)
 
@@ -138,7 +153,7 @@ def main(config: SD1Config):
     unet.to(fabric.device)
     if not config.trainer.cache_vae_outputs:
         vae.to(fabric.device)
-    if not config.text_encoder_peft and not config.trainer.cache_te_outputs:
+    if not config.is_train_text_encoder and not config.trainer.cache_te_outputs:
         text_encoder.to(fabric.device)
 
     train_time = time.perf_counter()
