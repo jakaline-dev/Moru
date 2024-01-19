@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from configs.SD1Config import SD1Config
 from diffusers import EulerDiscreteScheduler, StableDiffusionPipeline
 from diffusers.models import AutoencoderKL, UNet2DConditionModel
-from diffusers.models.vae import DiagonalGaussianDistribution
+from diffusers.models.autoencoders.vae import DiagonalGaussianDistribution
 from diffusers.optimization import get_scheduler
 from diffusers.training_utils import compute_snr
 from diffusers.utils.import_utils import is_xformers_available
@@ -66,7 +66,7 @@ def main(config: SD1Config):
         unet.enable_gradient_checkpointing()
         text_encoder.gradient_checkpointing_enable()
 
-    # xformers
+    # xformers (Note: Currently slower than Torch 2.0 SDPA)
     if config.trainer.use_xformers and is_xformers_available():
         unet.enable_xformers_memory_efficient_attention()
         print("xformers enabled!")
@@ -107,7 +107,6 @@ def main(config: SD1Config):
     fabric.print(
         {key: len(value) for key, value in dataloader.batch_sampler.buckets.items()}
     )
-
     dataloader = fabric.setup_dataloaders(dataloader)
 
     if config.trainer.max_train.method == "step":

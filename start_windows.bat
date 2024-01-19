@@ -33,14 +33,14 @@ IF NOT EXIST "%MAMBA_ROOT_PREFIX%\envs\Moru" (
 cls
 echo.
 echo Please select an option:
-echo 1) Start WebUI
+echo 1) Start Trainer
 echo 2) Update Moru
-echo 3) Open CMD 
+echo 3) Open CMD
 echo 4) Exit
 
 echo.
 
-set /p userchoice=Enter your choice (1~4):
+set /p userchoice=Enter your choice (1 ~ 4):
 
 if "%userchoice%"=="1" goto start
 if "%userchoice%"=="2" goto update
@@ -57,7 +57,7 @@ exit
 
 :update
 echo Updating Moru...
-call micromamba update
+call micromamba update -f env-win.yml -y
 call micromamba clean -a -f -y
 call pip install -U -r requirements-win.txt
 call pip cache purge

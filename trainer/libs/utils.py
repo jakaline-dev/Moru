@@ -13,7 +13,6 @@ def load_optimizer(optimizer):
     try:
         if optimizer == "AnyPrecisionAdamW":
             from libs.anyprecision_optimizer import AnyPrecisionAdamW
-
             return AnyPrecisionAdamW
         elif optimizer.endswith("8bit"):
             import bitsandbytes
