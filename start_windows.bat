@@ -1,4 +1,5 @@
 @echo off
+setlocal EnableDelayedExpansion
 
 cd /D "%~dp0"
 
@@ -25,9 +26,10 @@ IF NOT EXIST "%MAMBA_ROOT_PREFIX%\envs\Moru" (
 	call micromamba create -f env-win.yml -y
 	call micromamba clean -a -f -y
 	call micromamba activate Moru
-	call pip install -r requirements-win.txt
 	call pip cache purge
 )
+
+REM if "%~1"=="update" goto update
 
 :menu
 cls
@@ -57,13 +59,24 @@ exit
 
 :update
 echo Updating Moru...
+FOR /f "delims=" %%a in ('certutil -hashfile "%~f0" MD5') DO SET "hash1=%%a"
+call git pull --autostash
+FOR /f "delims=" %%a in ('certutil -hashfile "%~f0" MD5') DO SET "hash2=%%a"
+echo "!hash1!"
+echo "!hash2!"
+IF NOT "!hash1!"=="!hash2!" (
+	echo "start_windows.bat has been updated. Restarting..."
+	REM "update"
+	pause
+	start "" "%~f0"
+	exit /b
+)
+
 call micromamba update -f env-win.yml -y
 call micromamba clean -a -f -y
-call pip install -U -r requirements-win.txt
 call pip cache purge
 start "" "%~f0"
 exit /b
-REM goto start
 
 :cmd
 cls
