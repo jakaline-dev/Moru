@@ -1,5 +1,5 @@
 @echo off
-setlocal EnableDelayedExpansion
+setlocal enableDelayedExpansion
 
 cd /D "%~dp0"
 
@@ -59,12 +59,13 @@ exit
 
 :update
 echo Updating Moru...
-FOR /f "delims=" %%a in ('certutil -hashfile "%~f0" MD5') DO SET "hash1=%%a"
+call md5.bat "%~f0" hash1
 call git pull --autostash
-FOR /f "delims=" %%a in ('certutil -hashfile "%~f0" MD5') DO SET "hash2=%%a"
+call md5.bat "%~f0" hash2
+echo "%~f0"
 echo "!hash1!"
 echo "!hash2!"
-IF NOT "!hash1!"=="!hash2!" (
+IF "!hash1!" NEQ "!hash2!" (
 	echo "start_windows.bat has been updated. Restarting..."
 	REM "update"
 	pause
