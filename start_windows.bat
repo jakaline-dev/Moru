@@ -62,9 +62,6 @@ echo Updating Moru...
 call md5.bat "%~f0" hash1
 call git pull --autostash
 call md5.bat "%~f0" hash2
-echo "%~f0"
-echo "!hash1!"
-echo "!hash2!"
 IF "!hash1!" NEQ "!hash2!" (
 	echo "start_windows.bat has been updated. Restarting..."
 	REM "update"
@@ -77,7 +74,7 @@ call micromamba update -f env-win.yml -y
 call micromamba clean -a -f -y
 call pip cache purge
 start "" "%~f0"
-exit /b
+call exit /b
 
 :cmd
 cls

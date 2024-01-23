@@ -1,5 +1,8 @@
 @echo off
 setlocal enableDelayedExpansion
+
+REM source: https://github.com/npocmaka/batch.scripts/blob/master/fileUtils/md5.bat
+
 if "%~1" equ "" (
 	echo no file passed
 	echo pass -help to see the help message
@@ -50,7 +53,7 @@ for /f "skip=1 tokens=* delims=" %%# in ('certutil -hashfile "%~f1" MD5') do (
 if "%~2" neq "" (
 	endlocal && (
 		set "%~2=%md5%"
-	) 
+	)
 ) else (
 	echo %md5%
 )

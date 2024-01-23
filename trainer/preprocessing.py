@@ -1,23 +1,32 @@
-from datasets import Dataset
+from datasets import Dataset, Value
 from PIL import Image
 import os
 
-def load_local_dataset_folder(folder_path):
-    def gen():
-        for image_path in os.listdir(folder_path):
-            try:
-                img = Image.open(image_path)
-                base_name = os.path.splitext(os.path.basename(image_path))[:-1].join(".")
-                text_path = os.path.join(folder_path, base_name + ".txt")
-                yield {
-                    "image": img,
-                    "width": img.shape[0],
-                    "height": img.shape[1],
-                    "text": open(text_path, 'r').read() if open(text_path, 'r') else ''
-                }
-            except Exception:
-                pass
-    return Dataset.from_generator(gen)
 
-if __name__ == "__main__":
-    load_local_dataset_folder()
+def gen(folder_path: str):
+    #folder_path = r"D:\Dataset\jdkd\1_jdkdface"
+    for filename in os.listdir(folder_path):
+        try:
+            image_path = os.path.join(folder_path, filename)
+            if not os.path.isfile(image_path) or os.path.splitext(filename)[1] == ".txt":
+                continue
+            img = Image.open(image_path)
+            base_name = os.path.splitext(filename)[0]
+            text_path = os.path.join(folder_path, base_name + ".txt")
+            if not os.path.isfile(text_path):
+                continue
+            text = open(text_path, 'r').read().strip()
+            item = {
+                "image": img,
+                "width": img.size[0],
+                "height": img.size[1],
+                "text": text
+            }
+            yield item
+        except Exception as e:
+            print(e)
+            pass
+
+def load_local_dataset_folder(folder_path):
+    #, features={"image": Image.Image, "width": Value(dtype="int32"), "height": Value(dtype="int32"), "text": Value(dtype="string")}
+    return Dataset.from_generator(gen, gen_kwargs={"folder_path": folder_path})
