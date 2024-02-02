@@ -87,10 +87,6 @@ class PEFT(BaseModel):
 
 class Config(BaseModel):
     model_type: str = "SDXL"
-    train_lora: bool
-    train_unet: bool
-    train_text_encoder_1: bool
-    train_text_encoder_2: bool
     seed: int
     name: str
     fabric: Fabric

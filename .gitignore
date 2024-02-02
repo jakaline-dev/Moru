@@ -6,4 +6,4 @@ installer_files
 *.whl
 *.ipynb
 *.safetensors
-micromamba/
+.micromamba/

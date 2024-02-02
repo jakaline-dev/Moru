@@ -3,38 +3,34 @@ setlocal enableDelayedExpansion
 
 cd /D "%~dp0"
 
-SET env_win = 0
-SET env_wsl = 0
-
-
-
-SET MAMBA_ROOT_PREFIX=%cd%\micromamba
+SET MAMBA_ROOT_PREFIX=%cd%\.micromamba\windows
 SET RELEASE_URL=https://github.com/mamba-org/micromamba-releases/releases/latest/download/micromamba-win-64
 
 REM check installation
 
-IF NOT EXIST "%MAMBA_ROOT_PREFIX%" (
-	REM echo Downloading micromamba from %RELEASE_URL%
-	curl.exe -L -o micromamba.exe "%RELEASE_URL%"
-	IF NOT EXIST "%MAMBA_ROOT_PREFIX%" mkdir "%MAMBA_ROOT_PREFIX%" 2>nul
-	REM echo Installing micromamba to %MAMBA_INSTALL_PATH%
-	move /Y micromamba.exe "%MAMBA_ROOT_PREFIX%\micromamba.exe"
-)
-call %MAMBA_ROOT_PREFIX%\micromamba.exe shell hook -s cmd.exe -p "%MAMBA_ROOT_PREFIX%" -v >nul
+:check
+IF NOT EXIST "%MAMBA_ROOT_PREFIX%" goto install
+call %MAMBA_ROOT_PREFIX%\micromamba.exe shell hook -s cmd.exe -p "%MAMBA_ROOT_PREFIX%"
+if %errorlevel% NEQ 0 goto install
 call "%MAMBA_ROOT_PREFIX%\condabin\mamba_hook.bat"
-IF EXIST "%MAMBA_ROOT_PREFIX%\envs\Moru" (
-	call micromamba activate Moru
-	goto menu
-)
-IF NOT EXIST "%MAMBA_ROOT_PREFIX%\envs\Moru" (
-	echo Installing Moru...
-	call micromamba create -f env-win.yml -y
-	call micromamba clean -a -f -y
-	call micromamba activate Moru
-	call pip cache purge
-)
+if %errorlevel% NEQ 0 goto install
+call micromamba activate Moru
+if %errorlevel% NEQ 0 goto install
+goto menu
 
-REM if "%~1"=="update" goto update
+:install
+cls
+REM echo Downloading micromamba from %RELEASE_URL%
+curl.exe -L -o micromamba.exe "%RELEASE_URL%"
+IF NOT EXIST "%MAMBA_ROOT_PREFIX%" mkdir "%MAMBA_ROOT_PREFIX%" 2>nul
+REM echo Installing micromamba to %MAMBA_INSTALL_PATH%
+move /Y micromamba.exe "%MAMBA_ROOT_PREFIX%\micromamba.exe"
+echo Installing Moru...
+call micromamba create -f env-win.yml -y
+call micromamba clean -a -f -y
+call micromamba activate Moru
+call pip cache purge
+goto check
 
 :menu
 cls
