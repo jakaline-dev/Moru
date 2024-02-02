@@ -20,17 +20,15 @@ goto menu
 
 :install
 cls
-REM echo Downloading micromamba from %RELEASE_URL%
 curl.exe -L -o micromamba.exe "%RELEASE_URL%"
 IF NOT EXIST "%MAMBA_ROOT_PREFIX%" mkdir "%MAMBA_ROOT_PREFIX%" 2>nul
-REM echo Installing micromamba to %MAMBA_INSTALL_PATH%
 move /Y micromamba.exe "%MAMBA_ROOT_PREFIX%\micromamba.exe"
 echo Installing Moru...
 call micromamba create -f env-win.yml -y
 call micromamba clean -a -f -y
 call micromamba activate Moru
 call pip cache purge
-goto check
+goto menu
 
 :menu
 cls
@@ -60,9 +58,9 @@ exit
 
 :update
 echo Updating Moru...
-call md5.bat "%~f0" hash1
+call .bat/md5.bat "%~f0" hash1
 call git pull --autostash
-call md5.bat "%~f0" hash2
+call .bat/md5.bat "%~f0" hash2
 IF "!hash1!" NEQ "!hash2!" (
 	echo "start_windows.bat has been updated. Restarting..."
 	REM "update"
