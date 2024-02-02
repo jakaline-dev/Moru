@@ -1,6 +1,5 @@
 name: Moru
 channels:
-  - pytorch
   - nvidia
   - conda-forge
   - nodefaults
@@ -11,7 +10,7 @@ dependencies:
   - pip
   - pytorch::pytorch=2.2.0
   - pytorch::torchvision=0.17.0
-  - diffusers=0.25.1
+  - diffusers=0.26.0
   - transformers=4.37.1
   - omegaconf
   - accelerate=0.26.1

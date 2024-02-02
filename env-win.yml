@@ -1,6 +1,5 @@
 name: Moru
 channels:
-  #- pytorch
   - nvidia
   - conda-forge
   - nodefaults

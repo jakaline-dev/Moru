@@ -38,10 +38,11 @@ class Preprocess(BaseModel):
     caption_template: List[str]
 
 class Dataset(BaseModel):
+    path: str
     random_crop: bool
     random_flip: bool
-    shuffle_tags: bool
-    caption_dropout: float
+    #shuffle_tags: bool
+    #caption_dropout: float
 
 class Dataloader(BaseModel):
     batch_size: int
@@ -87,30 +88,35 @@ class PEFT(BaseModel):
 
 class Config(BaseModel):
     model_type: str = "SDXL"
-    seed: int
     name: str
-    fabric: Fabric
-    trainer: Trainer
+    #fabric: Fabric
+
+    seed: int
     do_sample: bool = True
     sample_strategy: Literal['steps', 'epoch', 'no'] = 'steps'
     sample_steps: Optional[Union[int, float]] = 500
     save_strategy: Literal['steps', 'epoch', 'no'] = 'steps'
     save_steps: Optional[Union[int, float]] = 500
     gradient_accumulation_steps: int = 1
+
     optimizer: Optimizer
-    lr: float = 1e-5
-    lr_unet: Optional[float]
-    lr_text_encoder_1: Optional[float]
-    lr_text_encoder_2: Optional[float]
     lr_scheduler: LRScheduler
-    cache_vae_outputs: bool
-    cache_te_outputs: bool
+
+    cache_vae: bool
+    cache_text_encoder: bool
+    cache_text_encoder_2: bool
+
     noise_offset: float
     min_snr: Union[int, float]
     preprocess: Preprocess
+
     dataset: Dataset
     dataloader: Dataloader
     logging: Logging
+
+    lr_unet: Optional[float]
+    lr_text_encoder_1: Optional[float]
+    lr_text_encoder_2: Optional[float]
     unet_peft: List[PEFT]
     text_encoder_peft: List[PEFT]
 

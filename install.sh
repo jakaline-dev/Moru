@@ -7,7 +7,6 @@ RELEASE_URL="https://micro.mamba.pm/api/micromamba/linux-64/latest"
 
 check(){
 	if [ ! -d "$MAMBA_ROOT_PREFIX" ]; then
-		echo "?????"
 		install
 	else
 		eval "$($MAMBA_ROOT_PREFIX/micromamba shell hook -s posix)" && micromamba activate Moru || install
@@ -39,7 +38,7 @@ do
 			micromamba
 			;;
 		"Open CMD")
-			#exec bash && eval "$($MAMBA_ROOT_PREFIX/micromamba shell hook -s posix)" && micromamba activate Moru
+			echo "3"
 			;;
 		"Exit")
 			echo "4"

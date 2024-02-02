@@ -23,6 +23,8 @@ cls
 curl.exe -L -o micromamba.exe "%RELEASE_URL%"
 IF NOT EXIST "%MAMBA_ROOT_PREFIX%" mkdir "%MAMBA_ROOT_PREFIX%" 2>nul
 move /Y micromamba.exe "%MAMBA_ROOT_PREFIX%\micromamba.exe"
+call %MAMBA_ROOT_PREFIX%\micromamba.exe shell hook -s cmd.exe -p "%MAMBA_ROOT_PREFIX%"
+call "%MAMBA_ROOT_PREFIX%\condabin\mamba_hook.bat"
 echo Installing Moru...
 call micromamba create -f env-win.yml -y
 call micromamba clean -a -f -y
@@ -31,7 +33,7 @@ call pip cache purge
 goto menu
 
 :menu
-cls
+REM cls
 echo.
 echo Please select an option:
 echo 1) Start Trainer
