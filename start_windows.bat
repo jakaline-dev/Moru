@@ -33,7 +33,7 @@ call pip cache purge
 goto menu
 
 :menu
-REM cls
+cls
 echo.
 echo Please select an option:
 echo 1) Start Trainer

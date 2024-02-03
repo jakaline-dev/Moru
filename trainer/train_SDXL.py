@@ -20,6 +20,7 @@ import math
 import os
 import random
 import shutil
+import itertools
 from pathlib import Path
 
 import datasets
@@ -188,7 +189,7 @@ def main(config: Config):
         from_safetensors=config.checkpoint_path.endswith(".safetensors"),
         vae_path=config.vae_path,
         scheduler_type="ddpm",
-        local_files_only=True,
+        #local_files_only=True,
     )
     noise_scheduler: DDPMScheduler = pipe.scheduler
     tokenizer: CLIPTokenizer = pipe.tokenizer
@@ -691,10 +692,10 @@ def main(config: Config):
 
                 # Backpropagate
                 accelerator.backward(loss)
-                # if accelerator.sync_gradients:
-                #     accelerator.clip_grad_norm_(
-                #         params_to_optimize, config.max_grad_norm
-                #     )
+                if accelerator.sync_gradients:
+                    accelerator.clip_grad_norm_(
+                        list(itertools.chain(*[p['params'] for p in params_to_optimize])), 1.
+                    )
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()
@@ -726,8 +727,9 @@ def main(config: Config):
             ):
                 logger.info("Sample images...")
                 # create pipeline
-                pipeline = StableDiffusionXLPipeline.from_pretrained(
+                pipeline = StableDiffusionXLPipeline(
                     tokenizer=tokenizer,
+                    tokenizer_2=tokenizer,
                     scheduler=EulerDiscreteScheduler.from_config(
                         noise_scheduler.config
                     ),
@@ -735,10 +737,6 @@ def main(config: Config):
                     text_encoder=unwrap_model(text_encoder),
                     text_encoder_2=unwrap_model(text_encoder_2),
                     unet=unwrap_model(unet),
-                    torch_dtype=weight_dtype,
-                    feature_extractor=None,
-                    safety_checker=None,
-                    requires_safety_checker=False,
                 )
 
                 pipeline = pipeline.to(accelerator.device)
@@ -750,9 +748,12 @@ def main(config: Config):
                     if config.seed
                     else None
                 )
-                # pipeline_args = {"prompt": args.prompt}
 
                 with torch.cuda.amp.autocast():
+                    print(**config.sample_pipeline.model_dump())
+                    pipeline(
+                            **config.sample_pipeline.model_dump(), generator=generator
+                        ).images[0].show()
                     images = [
                         pipeline(
                             **config.sample_pipeline.model_dump(), generator=generator
@@ -778,7 +779,10 @@ def main(config: Config):
                                 ]
                             }
                         )
-
+                for i, image in enumerate(images):
+                    image.show()
+                    image.save(f"{preview_dir}/{global_step}_{i}.png")
+                del images
                 del pipeline
                 torch.cuda.empty_cache()
                 if config.lr_unet > 0:
@@ -898,6 +902,6 @@ def load_and_validate_json(file_path: str) -> Config:
 
 
 if __name__ == "__main__":
-    file_path = r"C:\JAKALINE\Moru\trainer\config_example.json"
+    file_path = "config_example.json"
     config = load_and_validate_json(file_path)
     main(config)

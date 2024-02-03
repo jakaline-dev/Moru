@@ -30,7 +30,11 @@ select command in "${options[@]}"
 do
 	case $command in
 		"Start Trainer")
-			echo "1"
+			eval "$($MAMBA_ROOT_PREFIX/micromamba shell hook -s posix)"
+			micromamba activate Moru
+			cd "trainer"
+			echo "hi"
+			python train_SDXL.py
 			;;
 		"Update Moru")
 			echo "2"

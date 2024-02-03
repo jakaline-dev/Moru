@@ -93,13 +93,13 @@ class Config(BaseModel):
 
     gradient_checkpointing: bool = False
     gradient_accumulation_steps: int = 1
-    xformers: bool = True
+    xformers: bool = False
 
     max_train_steps: Optional[int] = None
     num_train_epochs: Optional[int] = 10
 
     sample_strategy: Literal["steps", "epoch", "no"] = "steps"
-    sample_steps: Optional[Union[int, float]] = 500
+    sample_steps: Optional[Union[int, float]] = 100
     sample_pipeline: SamplePipeline
     num_sample_images: int = 1
 
@@ -112,7 +112,7 @@ class Config(BaseModel):
     dataloader: Dataloader
 
     noise_offset: float = 0.0
-    min_snr: Union[int, float] = 0
+    min_snr: Union[int, float] = None
 
     max_grad_norm: float = 1.0
 
