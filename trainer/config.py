@@ -1,5 +1,6 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from typing import Optional, List, Literal, Union
+
 
 class Fabric(BaseModel):
     accelerator: str
@@ -7,122 +8,122 @@ class Fabric(BaseModel):
     devices: str
     precision: str
 
-class MaxTrain(BaseModel):
-    method: str
-    value: int
 
-class Trainer(BaseModel):
-    grad_accum_steps: int
-    use_xformers: bool
-    cache_vae_outputs: bool
-    cache_te_outputs: bool
-    max_train: MaxTrain
-    clip_skip: int
-    noise_offset: float
-    min_snr: int
+class Accelerator(BaseModel):
+    mixed_precision: str
+    report_to: Optional[Literal["all", "tensorboard", "wandb"]]
 
-class InitArgs(BaseModel):
-    lr: float
 
-class Optimizer(BaseModel):
-    type: str
-    lr: dict
+class AdamOptimizer(BaseModel):
+    type: Literal["AdamW", "AdamW8bit", "AnyPrecisionAdamW"]
+    beta1: float = 0.9
+    beta2: float = 0.999
+    weight_decay: float = 0.01
+    eps: float = 1e-08
+
 
 class LRScheduler(BaseModel):
-    name: str
-    init_args: dict
+    type: Literal[
+        "linear",
+        "cosine",
+        "cosine_with_restarts",
+        "polynomial",
+        "constant",
+        "constant_with_warmup",
+        "piecewise_constant",
+    ] = "constant"
+    num_warmup_steps: Optional[int] = None
 
-class Preprocess(BaseModel):
-    max_chunk: int
-    min_chunk: int
-    caption_template: List[str]
 
 class Dataset(BaseModel):
-    path: str
+    local_path: str
+    image_column: str = "image"
+    text_column: str = "text"
+
     random_crop: bool
     random_flip: bool
-    #shuffle_tags: bool
-    #caption_dropout: float
+    # shuffle_tags: bool
+    # caption_dropout: float
+    # max_chunk: int
+    # min_chunk: int
+    # caption_template: List[str]
+
 
 class Dataloader(BaseModel):
-    batch_size: int
-    drop_last: bool
-    pin_memory: bool
-    num_workers: int
-    persistent_workers: bool
+    batch_size: int = 1
+    drop_last: bool = False
+    pin_memory: bool = False
+    num_workers: int = 0
+    persistent_workers: bool = False
 
-class LoggingSave(BaseModel):
-    every: str
-    value: int
 
-class LoggingSamplePipeline(BaseModel):
+class SamplePipeline(BaseModel):
     prompt: str
     negative_prompt: str
-    width: int
-    height: int
+    width: int = 1024
+    height: int = 1024
     num_inference_steps: int
 
-class LoggingSample(BaseModel):
-    every: str
-    value: int
-    pipeline: LoggingSamplePipeline
 
-class Logging(BaseModel):
-    logger: Optional[str]
-    save: LoggingSave
-    sample: LoggingSample
-
-class PEFTParameters(BaseModel):
+class LoraConfig_(BaseModel):
     r: int
     target_modules: List[str]
     lora_alpha: int
-    lora_dropout: float
-    bias: str
-    rank_pattern: dict
-    alpha_pattern: dict
+    lora_dropout: float = 0.0
+    bias: Literal["none", "all", "lora_only"] = "none"
+    use_rslora: bool = False
+    init_lora_weights: Union[bool, Literal["gaussian", "loftq"]] = "gaussian"
+    # rank_pattern: dict
+    # alpha_pattern: dict
 
-class PEFT(BaseModel):
-    type: str
-    lr: float
-    parameters: PEFTParameters
+
+# ["to_k", "to_q", "to_v", "to_out.0"]
+# ["q_proj", "k_proj", "v_proj", "out_proj"]
+
 
 class Config(BaseModel):
-    model_type: str = "SDXL"
     name: str
-    #fabric: Fabric
 
+    checkpoint_path: str
+    vae_path: Optional[str] = None
+
+    # fabric: Fabric
+    accelerator: Accelerator
     seed: int
-    do_sample: bool = True
-    sample_strategy: Literal['steps', 'epoch', 'no'] = 'steps'
-    sample_steps: Optional[Union[int, float]] = 500
-    save_strategy: Literal['steps', 'epoch', 'no'] = 'steps'
-    save_steps: Optional[Union[int, float]] = 500
+
+    gradient_checkpointing: bool = False
     gradient_accumulation_steps: int = 1
+    xformers: bool = True
 
-    optimizer: Optimizer
+    max_train_steps: Optional[int] = None
+    num_train_epochs: Optional[int] = 10
+
+    sample_strategy: Literal["steps", "epoch", "no"] = "steps"
+    sample_steps: Optional[Union[int, float]] = 500
+    sample_pipeline: SamplePipeline
+    num_sample_images: int = 1
+
+    save_strategy: Literal["steps", "epoch", "only_last"] = "steps"
+    save_steps: Optional[Union[int, float]] = 500
+
+    optimizer: AdamOptimizer
     lr_scheduler: LRScheduler
-
-    cache_vae: bool
-    cache_text_encoder: bool
-    cache_text_encoder_2: bool
-
-    noise_offset: float
-    min_snr: Union[int, float]
-    preprocess: Preprocess
-
     dataset: Dataset
     dataloader: Dataloader
-    logging: Logging
 
-    lr_unet: Optional[float]
-    lr_text_encoder_1: Optional[float]
-    lr_text_encoder_2: Optional[float]
-    unet_peft: List[PEFT]
-    text_encoder_peft: List[PEFT]
+    noise_offset: float = 0.0
+    min_snr: Union[int, float] = 0
 
-# Example of how to create an instance of Config with your data
-config_data = {
-    # ... fill in with your configuration data ...
-}
+    max_grad_norm: float = 1.0
 
-config = Config(**config_data)
+    lr_unet: Optional[float] = 0.0
+    lr_text_encoder: Optional[float] = 0.0
+    lr_text_encoder_2: Optional[float] = 0.0
+
+    cache_vae: bool = False
+    cache_text_encoder: bool = False
+    cache_text_encoder_2: bool = False
+
+    peft_unet: LoraConfig_
+    peft_text_encoder: LoraConfig_
+    peft_text_encoder_2: LoraConfig_

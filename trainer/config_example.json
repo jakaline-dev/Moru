@@ -1,0 +1,58 @@
+{
+    "name": "ExampleModelTraining",
+    "checkpoint_path": "",
+    "accelerator": {
+      "mixed_precision": "bf16",
+      "report_to": null
+    },
+    "seed": 42,
+    "optimizer": {
+      "type": "AdamW8bit",
+      "beta1": 0.9,
+      "beta2": 0.999,
+      "weight_decay": 0.01,
+      "eps": 1e-08
+    },
+    "lr_scheduler": {
+      "type": "linear",
+      "num_warmup_steps": 500
+    },
+    "dataset": {
+      "local_path": "",
+      "image_column": "image",
+      "text_column": "text",
+      "random_crop": true,
+      "random_flip": true
+    },
+    "dataloader": {
+      "batch_size": 1,
+      "drop_last": true
+    },
+    "sample_pipeline": {
+        "prompt": "A futuristic cityscape",
+        "negative_prompt": "Low quality, blurry images",
+        "width": 1024,
+        "height": 1024,
+        "num_inference_steps": 28
+    },
+    "max_train_steps": 500,
+    "lr_unet": 2e-5,
+    "lr_text_encoder": 2e-6,
+    "lr_text_encoder_2": 4e-6,
+    "peft_unet": {
+      "r": 8,
+      "target_modules": ["to_k", "to_q", "to_v", "to_out.0"],
+      "lora_alpha": 8
+    },
+    "peft_text_encoder": {
+        "r": 8,
+        "target_modules": ["q_proj", "k_proj", "v_proj", "out_proj"],
+        "lora_alpha": 8
+    },
+    "peft_text_encoder_2": {
+        "r": 8,
+        "target_modules": ["q_proj", "k_proj", "v_proj", "out_proj"],
+        "lora_alpha": 8
+    }
+  }
+  
