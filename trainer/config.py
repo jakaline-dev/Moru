@@ -111,7 +111,7 @@ class Config(BaseModel):
     dataset: Dataset
     dataloader: Dataloader
 
-    noise_offset: float = 0.0
+    noise_offset: float = None
     min_snr: Union[int, float] = None
 
     max_grad_norm: float = 1.0

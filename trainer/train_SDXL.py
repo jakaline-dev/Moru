@@ -77,6 +77,7 @@ from preprocessing import load_dataset_local, setup_dataset, setup_dataloader
 from libs.anyprecision_optimizer import AnyPrecisionAdamW
 from pydantic import BaseModel, ValidationError
 import json
+from PIL import Image
 
 logger = get_logger(__name__)
 
@@ -587,6 +588,14 @@ def main(config: Config):
                     pixel_values = batch["pixel_values"]
 
                 model_input = vae.encode(pixel_values).latent_dist.sample()
+                ##INJECTION
+                test = vae.decode(model_input).sample
+                test = test.cpu().permute(0, 2, 3, 1).float().numpy()
+                print(test.shape)
+                test = (test * 255).round().astype("uint8")
+                pil_images = [Image.fromarray(image) for image in test]
+                pil_images[0].show()
+
                 model_input = model_input * vae.config.scaling_factor
                 if config.vae_path is None:
                     model_input = model_input.to(weight_dtype)
@@ -750,7 +759,6 @@ def main(config: Config):
                 )
 
                 with torch.cuda.amp.autocast():
-                    print(**config.sample_pipeline.model_dump())
                     pipeline(
                             **config.sample_pipeline.model_dump(), generator=generator
                         ).images[0].show()
@@ -780,7 +788,6 @@ def main(config: Config):
                             }
                         )
                 for i, image in enumerate(images):
-                    image.show()
                     image.save(f"{preview_dir}/{global_step}_{i}.png")
                 del images
                 del pipeline
