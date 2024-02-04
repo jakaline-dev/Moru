@@ -185,17 +185,17 @@ def setup_dataset(
         crop_top_lefts = []
         target_sizes = []
         for image in images:
-            composer = default_composer
+            composer = []  # default_composer
             target_size, resize_resolution = get_target_size(image)
             original_sizes.append((image.height, image.width))
             target_sizes.append((target_size[1], target_size[0]))
-            # composer = [
-            #     transforms.Resize(
-            #         resize_resolution,
-            #         interpolation=transforms.InterpolationMode.BICUBIC,
-            #     )
-            # ] + composer
-            image = image.resize((resize_resolution), Image.BICUBIC)
+            transform_resize = transforms.Resize(
+                resize_resolution[::-1],
+                interpolation=transforms.InterpolationMode.BICUBIC,
+            )
+            image = transform_resize(image)
+            # image.show()
+            # image = image.resize((resize_resolution), Image.BICUBIC)
             if random_flip:
                 # flip
                 composer = [transforms.RandomHorizontalFlip()] + composer
@@ -217,6 +217,7 @@ def setup_dataset(
                 composer = [transforms_random_crop] + composer
             crop_top_lefts.append(crop_top_left)
             image = transforms.Compose(composer)(image)
+            image = transforms.Compose(default_composer)(image)
             pixel_values.append(image)
         examples["original_sizes"] = original_sizes
         examples["crop_top_lefts"] = crop_top_lefts
@@ -317,21 +318,24 @@ def setup_dataloader(
 
 if __name__ == "__main__":
     print("Load dataset")
-    ds = load_dataset_local()
+    ds = load_dataset_local("D:/Dataset/jdkd/1_jdkd")
     print("Setup dataset")
     from diffusers.pipelines.stable_diffusion.convert_from_ckpt import (
         download_from_original_stable_diffusion_ckpt,
     )
 
     pipe = download_from_original_stable_diffusion_ckpt(
-        # path,
+        "C:/CODE/ComfyUI_windows_portable/ComfyUI/models/checkpoints/sd_xl_base_1.0.safetensors",
         from_safetensors=True,
         scheduler_type="ddpm",
         local_files_only=True,
     )
     tokenizer = pipe.tokenizer
 
-    ds = setup_dataset(ds, tokenizer=tokenizer)
+    ds = setup_dataset(ds, tokenizer=tokenizer, random_crop=True, random_flip=True)
+    for item in ds:
+        print(item)
+
     print("Setup dataloader")
     dl = setup_dataloader(ds, batch_size=4)
     for item in dl:

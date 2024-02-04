@@ -70,6 +70,7 @@ from diffusers.utils.import_utils import is_xformers_available
 from diffusers.utils.torch_utils import is_compiled_module
 from diffusers.pipelines.stable_diffusion.convert_from_ckpt import (
     download_from_original_stable_diffusion_ckpt,
+    convert_ldm_vae_checkpoint,
 )
 from config import Config
 from datetime import datetime
@@ -188,15 +189,20 @@ def main(config: Config):
     pipe = download_from_original_stable_diffusion_ckpt(
         config.checkpoint_path,
         from_safetensors=config.checkpoint_path.endswith(".safetensors"),
-        vae_path=config.vae_path,
-        scheduler_type="ddpm",
-        #local_files_only=True,
+        # vae_path=config.vae_path,
+        # scheduler_type="ddpm",
+        # local_files_only=True,
     )
-    noise_scheduler: DDPMScheduler = pipe.scheduler
+    noise_scheduler: DDPMScheduler = DDPMScheduler.from_config(pipe.scheduler.config)
+    print(noise_scheduler)
+    print(noise_scheduler.config)
     tokenizer: CLIPTokenizer = pipe.tokenizer
     text_encoder: CLIPTextModel = pipe.text_encoder
     text_encoder_2: CLIPTextModelWithProjection = pipe.text_encoder_2
     unet: UNet2DConditionModel = pipe.unet
+    # if config.vae_path:
+    #    vae: AutoencoderKL = convert_ldm_vae_checkpoint(config.vae_path)
+    # else:
     vae: AutoencoderKL = pipe.vae
 
     # We only train the additional adapter LoRA layers
@@ -587,16 +593,20 @@ def main(config: Config):
                 else:
                     pixel_values = batch["pixel_values"]
 
-                model_input = vae.encode(pixel_values).latent_dist.sample()
-                ##INJECTION
-                test = vae.decode(model_input).sample
-                test = test.cpu().permute(0, 2, 3, 1).float().numpy()
-                print(test.shape)
-                test = (test * 255).round().astype("uint8")
-                pil_images = [Image.fromarray(image) for image in test]
-                pil_images[0].show()
+                # model_input = vae.encode(pixel_values).latent_dist.sample()
+                # test = vae.decode(model_input).sample
+                # test = test.cpu().permute(0, 2, 3, 1).float().numpy()
+                # test = (test / 2 + 0.5).clip(0, 1)
+                # test = (test * 255).round().astype("uint8")
+                # pil_images = [Image.fromarray(image) for image in test]
+                # pil_images[0].show()
+                # model_input = model_input * vae.config.scaling_factor
 
-                model_input = model_input * vae.config.scaling_factor
+                model_input = (
+                    vae.encode(pixel_values).latent_dist.sample()
+                    * vae.config.scaling_factor
+                )
+
                 if config.vae_path is None:
                     model_input = model_input.to(weight_dtype)
 
@@ -667,12 +677,16 @@ def main(config: Config):
                     added_cond_kwargs=unet_added_conditions,
                     return_dict=False,
                 )[0]
-
-                target = noise
+                # test = vae.decode(model_pred.to(dtype=torch.bfloat16)).sample
+                # test = test.cpu().permute(0, 2, 3, 1).float().numpy()
+                # test = (test / 2 + 0.5).clip(0, 1)
+                # test = (test * 255).round().astype("uint8")
+                # pil_images = [Image.fromarray(image) for image in test]
+                # pil_images[0].show()
 
                 if config.min_snr is None:
                     loss = F.mse_loss(
-                        model_pred.float(), target.float(), reduction="mean"
+                        model_pred.float(), noise.float(), reduction="mean"
                     )
                 else:
                     # Compute loss-weights as per Section 3.4 of https://arxiv.org/abs/2303.09556.
@@ -685,7 +699,7 @@ def main(config: Config):
                     mse_loss_weights = mse_loss_weights / snr
 
                     loss = F.mse_loss(
-                        model_pred.float(), target.float(), reduction="none"
+                        model_pred.float(), noise.float(), reduction="none"
                     )
                     loss = (
                         loss.mean(dim=list(range(1, len(loss.shape))))
@@ -703,7 +717,10 @@ def main(config: Config):
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
                     accelerator.clip_grad_norm_(
-                        list(itertools.chain(*[p['params'] for p in params_to_optimize])), 1.
+                        list(
+                            itertools.chain(*[p["params"] for p in params_to_optimize])
+                        ),
+                        1.0,
                     )
                 optimizer.step()
                 lr_scheduler.step()
@@ -760,8 +777,8 @@ def main(config: Config):
 
                 with torch.cuda.amp.autocast():
                     pipeline(
-                            **config.sample_pipeline.model_dump(), generator=generator
-                        ).images[0].show()
+                        **config.sample_pipeline.model_dump(), generator=generator
+                    ).images[0].show()
                     images = [
                         pipeline(
                             **config.sample_pipeline.model_dump(), generator=generator
