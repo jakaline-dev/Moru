@@ -230,22 +230,22 @@ def setup_dataset_transform(
             crop_top_lefts = []
             for image in examples["image"]:
                 composer = []  # default_composer
-                target_size, _ = get_target_size(image)
+                target_size = examples["target_sizes"]
                 if random_flip:
                     # flip
                     composer = [transforms.RandomHorizontalFlip()] + composer
                 if not random_crop:
-                    composer = [transforms.CenterCrop(target_size[::-1])] + composer
+                    composer = [transforms.CenterCrop(examples["target_sizes"])] + composer
                     crop_top = max(
-                        0, int(round((image.height - target_size[1]) / 2.0))
+                        0, int(round((image.height - target_size[0]) / 2.0))
                     )
                     crop_left = max(
-                        0, int(round((image.width - target_size[0]) / 2.0))
+                        0, int(round((image.width - target_size[1]) / 2.0))
                     )
                     crop_top_left = tuple([crop_top, crop_left])
                 else:
-                    transforms_random_crop = transforms.RandomCrop(target_size[::-1])
-                    crop_dict = transforms_random_crop.get_params(image, target_size[::-1])
+                    transforms_random_crop = transforms.RandomCrop(target_size)
+                    crop_dict = transforms_random_crop.get_params(image, target_size)
                     # print(image.width, image.height, target_size)
                     # print(crop_dict)
                     crop_top_left = tuple([crop_dict[0], crop_dict[1]])
