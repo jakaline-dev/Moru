@@ -68,17 +68,17 @@ from diffusers.utils import (
 )
 from diffusers.utils.import_utils import is_xformers_available
 from diffusers.utils.torch_utils import is_compiled_module
-from diffusers.pipelines.stable_diffusion.convert_from_ckpt import (
-    download_from_original_stable_diffusion_ckpt,
-    convert_ldm_vae_checkpoint,
-)
+from diffusers.models.autoencoders.vae import DiagonalGaussianDistribution
 from config import Config
 from datetime import datetime
-from preprocessing import load_dataset_local, setup_dataset, setup_dataloader
-from libs.anyprecision_optimizer import AnyPrecisionAdamW
+from libs.load_checkpoint import load_sdxl_ckpt
+from libs.preprocessing import load_dataset_local, get_buckets, setup_dataset, setup_dataset_transform, setup_dataloader
+from optimizers import AnyPrecisionAdamW
 from pydantic import BaseModel, ValidationError
 import json
 from PIL import Image
+from datasets import disable_caching
+disable_caching()
 
 logger = get_logger(__name__)
 
@@ -185,31 +185,7 @@ def main(config: Config):
         #         token=args.hub_token,
         #     ).repo_id
 
-    # Load Model
-    pipe = download_from_original_stable_diffusion_ckpt(
-        config.checkpoint_path,
-        from_safetensors=config.checkpoint_path.endswith(".safetensors"),
-        # vae_path=config.vae_path,
-        # scheduler_type="ddpm",
-        # local_files_only=True,
-    )
-    noise_scheduler: DDPMScheduler = DDPMScheduler.from_config(pipe.scheduler.config)
-    print(noise_scheduler)
-    print(noise_scheduler.config)
-    tokenizer: CLIPTokenizer = pipe.tokenizer
-    text_encoder: CLIPTextModel = pipe.text_encoder
-    text_encoder_2: CLIPTextModelWithProjection = pipe.text_encoder_2
-    unet: UNet2DConditionModel = pipe.unet
-    # if config.vae_path:
-    #    vae: AutoencoderKL = convert_ldm_vae_checkpoint(config.vae_path)
-    # else:
-    vae: AutoencoderKL = pipe.vae
 
-    # We only train the additional adapter LoRA layers
-    vae.requires_grad_(False)
-    text_encoder.requires_grad_(False)
-    text_encoder_2.requires_grad_(False)
-    unet.requires_grad_(False)
 
     # For mixed precision training we cast all non-trainable weigths (vae, non-lora text_encoder and non-lora unet) to half-precision
     # as these weights are only used for inference, keeping weights in full precision is not required.
@@ -219,15 +195,28 @@ def main(config: Config):
     elif accelerator.mixed_precision == "bf16":
         weight_dtype = torch.bfloat16
 
+    # Load Model
+    pipe = load_sdxl_ckpt(config.checkpoint_path, vae_path=config.vae_path) #, dtype=weight_dtype
+    noise_scheduler: DDPMScheduler = DDPMScheduler.from_config(pipe['scheduler_config'])
+    tokenizer: CLIPTokenizer = pipe['tokenizer']
+    tokenizer_2: CLIPTokenizer = pipe['tokenizer_2']
+    text_encoder: CLIPTextModel = pipe['text_encoder']
+    text_encoder_2: CLIPTextModelWithProjection = pipe['text_encoder_2']
+    unet: UNet2DConditionModel = pipe['unet']
+    vae: AutoencoderKL = pipe['vae']
+
+    # We only train the additional adapter LoRA layers
+    vae.requires_grad_(False)
+    text_encoder.requires_grad_(False)
+    text_encoder_2.requires_grad_(False)
+    unet.requires_grad_(False)
+
     # Move unet, vae and text_encoder to device and cast to weight_dtype
     # The VAE is in float32 to avoid NaN losses.
-    unet.to(accelerator.device, dtype=weight_dtype)
-    if config.vae_path is None:
-        vae.to(accelerator.device, dtype=torch.float32)
-    else:
-        vae.to(accelerator.device, dtype=weight_dtype)
-    text_encoder.to(accelerator.device, dtype=weight_dtype)
-    text_encoder_2.to(accelerator.device, dtype=weight_dtype)
+    vae.to(accelerator.device, dtype=weight_dtype if weight_dtype != torch.float16 else torch.float32)
+    unet.to(dtype=weight_dtype) #accelerator.device,
+    text_encoder.to(dtype=weight_dtype)
+    text_encoder_2.to(dtype=weight_dtype)
 
     if config.xformers:
         if is_xformers_available():
@@ -443,23 +432,23 @@ def main(config: Config):
         weight_decay=config.optimizer.weight_decay,
         eps=config.optimizer.eps,
     )
-    dataset = load_dataset_local(
-        config.dataset.local_path,
-        image_column=config.dataset.image_column,
-        text_column=config.dataset.text_column,
-    )
 
     with accelerator.main_process_first():
-        dataset = setup_dataset(
+        dataset = load_dataset_local(config.dataset.local_path)
+        #with accelerator.autocast():
+        dataset = setup_dataset(dataset)
+        buckets = get_buckets(dataset)
+        print(buckets)
+        dataset = setup_dataset_transform(
             dataset,
-            image_column=config.dataset.image_column,
-            text_column=config.dataset.text_column,
             random_flip=config.dataset.random_flip,
             random_crop=config.dataset.random_crop,
+            vae=vae if config.cache_vae else None,
+            accelerator=accelerator,
             tokenizer=tokenizer,
+            tokenizer_2=tokenizer_2
         )
-
-    dataloader = setup_dataloader(dataset, **config.dataloader.model_dump())
+    dataloader = setup_dataloader(dataset, buckets=list(buckets.values()), **config.dataloader.model_dump())
 
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
@@ -478,6 +467,7 @@ def main(config: Config):
     )
 
     # Prepare everything with our `accelerator`.
+    print("prepare...")
     (
         unet,
         text_encoder,
@@ -588,24 +578,25 @@ def main(config: Config):
         for step, batch in enumerate(dataloader):
             with accelerator.accumulate(unet):
                 # Convert images to latent space
-                if config.vae_path is not None:
-                    pixel_values = batch["pixel_values"].to(dtype=weight_dtype)
+                if "latent_values" in batch:
+                    model_input = DiagonalGaussianDistribution(
+                        batch["latent_values"].to(dtype=vae.dtype)
+                    ).sample()
                 else:
-                    pixel_values = batch["pixel_values"]
+                    #model_input = vae.encode(batch["pixel_values"].to(dtype=weight_dtype)).latent_dist.sample()
+                    with accelerator.autocast():
+                        model_input = vae.encode(batch["pixel_values"]).latent_dist.sample()
+                model_input = model_input * vae.config.scaling_factor
 
-                # model_input = vae.encode(pixel_values).latent_dist.sample()
-                # test = vae.decode(model_input).sample
-                # test = test.cpu().permute(0, 2, 3, 1).float().numpy()
-                # test = (test / 2 + 0.5).clip(0, 1)
-                # test = (test * 255).round().astype("uint8")
-                # pil_images = [Image.fromarray(image) for image in test]
-                # pil_images[0].show()
-                # model_input = model_input * vae.config.scaling_factor
-
-                model_input = (
-                    vae.encode(pixel_values).latent_dist.sample()
-                    * vae.config.scaling_factor
-                )
+                # with accelerator.autocast(), torch.inference_mode():
+                    #model_input = model_input / vae.config.scaling_factor
+                    # test = vae.decode(model_input).sample
+                    # test = test.cpu().permute(0, 2, 3, 1).float().numpy()
+                    # print(test, test.shape, np.min(test), np.max(test))
+                    # test = (test / 2 + 0.5).clip(0, 1)
+                    # test = (test * 255).round().astype("uint8")
+                    # pil_images = [Image.fromarray(image) for image in test]
+                    # pil_images[0].show()
 
                 if config.vae_path is None:
                     model_input = model_input.to(weight_dtype)
@@ -670,6 +661,7 @@ def main(config: Config):
                     ],
                 )
                 unet_added_conditions.update({"text_embeds": pooled_prompt_embeds})
+
                 model_pred = unet(
                     noisy_model_input,
                     timesteps,
@@ -677,12 +669,6 @@ def main(config: Config):
                     added_cond_kwargs=unet_added_conditions,
                     return_dict=False,
                 )[0]
-                # test = vae.decode(model_pred.to(dtype=torch.bfloat16)).sample
-                # test = test.cpu().permute(0, 2, 3, 1).float().numpy()
-                # test = (test / 2 + 0.5).clip(0, 1)
-                # test = (test * 255).round().astype("uint8")
-                # pil_images = [Image.fromarray(image) for image in test]
-                # pil_images[0].show()
 
                 if config.min_snr is None:
                     loss = F.mse_loss(
@@ -751,34 +737,31 @@ def main(config: Config):
                 and config.sample_steps
                 and global_step % config.sample_steps == 0
             ):
-                logger.info("Sample images...")
-                # create pipeline
-                pipeline = StableDiffusionXLPipeline(
-                    tokenizer=tokenizer,
-                    tokenizer_2=tokenizer,
-                    scheduler=EulerDiscreteScheduler.from_config(
-                        noise_scheduler.config
-                    ),
-                    vae=vae,
-                    text_encoder=unwrap_model(text_encoder),
-                    text_encoder_2=unwrap_model(text_encoder_2),
-                    unet=unwrap_model(unet),
-                )
+                with accelerator.autocast(), torch.inference_mode():
+                    logger.info("Sample images...")
+                    # create pipeline
+                    pipeline = StableDiffusionXLPipeline(
+                        tokenizer=tokenizer,
+                        tokenizer_2=tokenizer_2,
+                        scheduler=EulerDiscreteScheduler.from_config(
+                            noise_scheduler.config
+                        ),
+                        vae=vae,
+                        text_encoder=unwrap_model(text_encoder),
+                        text_encoder_2=unwrap_model(text_encoder_2),
+                        unet=unwrap_model(unet),
+                    )
 
-                pipeline = pipeline.to(accelerator.device)
-                pipeline.set_progress_bar_config(disable=True)
+                    pipeline = pipeline.to(accelerator.device)
+                    pipeline.set_progress_bar_config(disable=True)
 
-                # run inference
-                generator = (
-                    torch.Generator(device=accelerator.device).manual_seed(config.seed)
-                    if config.seed
-                    else None
-                )
+                    # run inference
+                    generator = (
+                        torch.Generator(device=accelerator.device).manual_seed(config.seed)
+                        if config.seed
+                        else None
+                    )
 
-                with torch.cuda.amp.autocast():
-                    pipeline(
-                        **config.sample_pipeline.model_dump(), generator=generator
-                    ).images[0].show()
                     images = [
                         pipeline(
                             **config.sample_pipeline.model_dump(), generator=generator
@@ -786,28 +769,28 @@ def main(config: Config):
                         for _ in range(config.num_sample_images)
                     ]
 
-                for tracker in accelerator.trackers:
-                    if tracker.name == "tensorboard":
-                        np_images = np.stack([np.asarray(img) for img in images])
-                        tracker.writer.add_images(
-                            "validation", np_images, epoch, dataformats="NHWC"
-                        )
-                    if tracker.name == "wandb":
-                        tracker.log(
-                            {
-                                "validation": [
-                                    wandb.Image(
-                                        image,
-                                        caption=f"{i}: {config.sample_pipeline.prompt}",
-                                    )
-                                    for i, image in enumerate(images)
-                                ]
-                            }
-                        )
-                for i, image in enumerate(images):
-                    image.save(f"{preview_dir}/{global_step}_{i}.png")
-                del images
-                del pipeline
+                    for tracker in accelerator.trackers:
+                        if tracker.name == "tensorboard":
+                            np_images = np.stack([np.asarray(img) for img in images])
+                            tracker.writer.add_images(
+                                "validation", np_images, epoch, dataformats="NHWC"
+                            )
+                        if tracker.name == "wandb":
+                            tracker.log(
+                                {
+                                    "validation": [
+                                        wandb.Image(
+                                            image,
+                                            caption=f"{i}: {config.sample_pipeline.prompt}",
+                                        )
+                                        for i, image in enumerate(images)
+                                    ]
+                                }
+                            )
+                    for i, image in enumerate(images):
+                        image.save(f"{preview_dir}/{global_step}_{i}.png")
+                    del images
+                    del pipeline
                 torch.cuda.empty_cache()
                 if config.lr_unet > 0:
                     unet.train()
