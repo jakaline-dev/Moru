@@ -11,7 +11,7 @@ dependencies:
   - pytorch::pytorch=2.1.2
   - pytorch::torchvision=0.16.2
   - pytorch::pytorch-cuda=12.1
-  - diffusers=0.26.1
+  - diffusers=0.26.2
   - transformers=4.37.1
   - omegaconf
   - accelerate=0.26.1

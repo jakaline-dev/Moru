@@ -3,7 +3,7 @@ setlocal enableDelayedExpansion
 
 cd /D "%~dp0"
 
-SET MAMBA_ROOT_PREFIX=%cd%\.micromamba\windows
+SET MAMBA_ROOT_PREFIX=%cd%\.micromamba
 SET RELEASE_URL=https://github.com/mamba-org/micromamba-releases/releases/latest/download/micromamba-win-64
 
 REM check installation

@@ -1,8 +1,9 @@
 #!/bin/bash
 
-cd "$(cd "$(dirname "$0")" && pwd)"
+#cd "$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 
-export MAMBA_ROOT_PREFIX="$(pwd)/.micromamba/linux"
+export MAMBA_ROOT_PREFIX="$HOME/.micromamba"
 RELEASE_URL="https://micro.mamba.pm/api/micromamba/linux-64/latest"
 
 check(){
@@ -24,30 +25,34 @@ install(){
 }
 
 check
+eval "$($MAMBA_ROOT_PREFIX/micromamba shell hook -s posix)"
+micromamba activate Moru
+clear
 
-options=("Start Trainer" "Update Moru" "Open CMD" "Exit")
-select command in "${options[@]}"
+while true
 do
-	case $command in
-		"Start Trainer")
-			eval "$($MAMBA_ROOT_PREFIX/micromamba shell hook -s posix)"
-			micromamba activate Moru
-			cd "trainer"
-			echo "hi"
-			python train_SDXL.py
-			;;
-		"Update Moru")
-			echo "2"
-			micromamba activate Moru
-			micromamba
-			;;
-		"Open CMD")
-			echo "3"
-			;;
-		"Exit")
-			echo "4"
-			break;;
-		*)
-			echo "Ooops";;
-	esac
+	options=("Start Trainer" "Update Moru" "Open CMD" "Exit")
+	select command in "${options[@]}"
+	do
+		case $command in
+			"Start Trainer")
+				cd "$SCRIPT_DIR/trainer"
+				python train_SDXL.py
+				;;
+			"Update Moru")
+				echo "2"
+				micromamba update -f env-win.yml -y
+				micromamba clean -a -f -y
+				pip cache purge
+				;;
+			"Open CMD")
+				echo "3"
+				;;
+			"Exit")
+				echo "4"
+				break;;
+			*)
+				echo "Ooops";;
+		esac
+	done
 done

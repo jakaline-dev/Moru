@@ -73,10 +73,12 @@ from config import Config
 from datetime import datetime
 from libs.load_checkpoint import load_sdxl_ckpt
 from libs.preprocessing import load_dataset_local, get_buckets, setup_dataset, setup_dataset_transform, setup_dataloader
+from libs.save_model_hook import save_lora_weights
 from optimizers import AnyPrecisionAdamW
 from pydantic import BaseModel, ValidationError
 import json
 from PIL import Image
+from diffusers.utils.state_dict_utils import convert_state_dict_to_kohya
 from datasets import disable_caching
 disable_caching()
 
@@ -128,7 +130,7 @@ def encode_prompt(text_encoders, tokenizers, prompt, text_input_ids_list=None):
 def main(config: Config):
     if not config.name:
         config.name = datetime.now().strftime("%Y-%m-%d_%H-%M")
-    project_dir = Path(os.getcwd()).parent / config.name
+    project_dir = Path(os.getcwd()).parent / "trainer_runs" / config.name
     logging_dir = project_dir / "logs"
     output_dir = project_dir / "output"
     preview_dir = project_dir / "preview"
@@ -196,6 +198,7 @@ def main(config: Config):
         weight_dtype = torch.bfloat16
 
     # Load Model
+    print("Loading checkpoint...")
     pipe = load_sdxl_ckpt(config.checkpoint_path, vae_path=config.vae_path) #, dtype=weight_dtype
     noise_scheduler: DDPMScheduler = DDPMScheduler.from_config(pipe['scheduler_config'])
     tokenizer: CLIPTokenizer = pipe['tokenizer']
@@ -214,7 +217,7 @@ def main(config: Config):
     # Move unet, vae and text_encoder to device and cast to weight_dtype
     # The VAE is in float32 to avoid NaN losses.
     vae.to(accelerator.device, dtype=weight_dtype if weight_dtype != torch.float16 else torch.float32)
-    unet.to(dtype=weight_dtype) #accelerator.device,
+    unet.to(dtype=weight_dtype) #accelerator.device
     text_encoder.to(dtype=weight_dtype)
     text_encoder_2.to(dtype=weight_dtype)
 
@@ -250,48 +253,6 @@ def main(config: Config):
         model = accelerator.unwrap_model(model)
         model = model._orig_mod if is_compiled_module(model) else model
         return model
-
-    # create custom saving & loading hooks so that `accelerator.save_state(...)` serializes in a nice format
-    def save_model_hook(models, weights, output_dir):
-        if accelerator.is_main_process:
-            # there are only two options here. Either are just the unet attn processor layers
-            # or there are the unet and text encoder atten layers
-            unet_lora_layers_to_save = None
-            text_encoder_one_lora_layers_to_save = None
-            text_encoder_two_lora_layers_to_save = None
-
-            for model in models:
-                if isinstance(unwrap_model(model), type(unwrap_model(unet))):
-                    unet_lora_layers_to_save = convert_state_dict_to_diffusers(
-                        get_peft_model_state_dict(model)
-                    )
-                elif isinstance(unwrap_model(model), type(unwrap_model(text_encoder))):
-                    text_encoder_one_lora_layers_to_save = (
-                        convert_state_dict_to_diffusers(
-                            get_peft_model_state_dict(model)
-                        )
-                    )
-                elif isinstance(
-                    unwrap_model(model), type(unwrap_model(text_encoder_2))
-                ):
-                    text_encoder_two_lora_layers_to_save = (
-                        convert_state_dict_to_diffusers(
-                            get_peft_model_state_dict(model)
-                        )
-                    )
-                else:
-                    raise ValueError(f"unexpected save model: {model.__class__}")
-
-                # make sure to pop weight so that corresponding model is not saved again
-                if weights:
-                    weights.pop()
-
-            StableDiffusionXLPipeline.save_lora_weights(
-                output_dir,
-                unet_lora_layers=unet_lora_layers_to_save,
-                text_encoder_lora_layers=text_encoder_one_lora_layers_to_save,
-                text_encoder_2_lora_layers=text_encoder_two_lora_layers_to_save,
-            )
 
     def load_model_hook(models, input_dir):
         unet_ = None
@@ -355,7 +316,7 @@ def main(config: Config):
                 models.extend([text_encoder_two_])
             cast_training_params(models, dtype=torch.float32)
 
-    accelerator.register_save_state_pre_hook(save_model_hook)
+    #accelerator.register_save_state_pre_hook(save_model_hook)
     accelerator.register_load_state_pre_hook(load_model_hook)
 
     if config.gradient_checkpointing:
@@ -370,6 +331,8 @@ def main(config: Config):
     if torch.cuda.is_available():
         capability = torch.cuda.get_device_capability(torch.device("cuda"))
         if capability[0] >= 8:
+            print("TF32 enabled")
+            torch.backends.cudnn.allow_tf32 = True
             torch.backends.cuda.matmul.allow_tf32 = True
 
     # if args.scale_lr:
@@ -435,10 +398,10 @@ def main(config: Config):
 
     with accelerator.main_process_first():
         dataset = load_dataset_local(config.dataset.local_path)
-        #with accelerator.autocast():
         dataset = setup_dataset(dataset)
+        print("Get buckets")
         buckets = get_buckets(dataset)
-        print(buckets)
+        print({key: len(value) for key, value in buckets.items()})
         dataset = setup_dataset_transform(
             dataset,
             random_flip=config.dataset.random_flip,
@@ -578,28 +541,17 @@ def main(config: Config):
         for step, batch in enumerate(dataloader):
             with accelerator.accumulate(unet):
                 # Convert images to latent space
-                if "latent_values" in batch:
-                    model_input = DiagonalGaussianDistribution(
-                        batch["latent_values"].to(dtype=vae.dtype)
-                    ).sample()
-                else:
-                    #model_input = vae.encode(batch["pixel_values"].to(dtype=weight_dtype)).latent_dist.sample()
-                    with accelerator.autocast():
+                with accelerator.autocast():
+                    if "latent_values" in batch:
+                        model_input = DiagonalGaussianDistribution(
+                            batch["latent_values"]#.to(dtype=vae.dtype)
+                        ).sample()
+                    else:
                         model_input = vae.encode(batch["pixel_values"]).latent_dist.sample()
                 model_input = model_input * vae.config.scaling_factor
 
-                # with accelerator.autocast(), torch.inference_mode():
-                    #model_input = model_input / vae.config.scaling_factor
-                    # test = vae.decode(model_input).sample
-                    # test = test.cpu().permute(0, 2, 3, 1).float().numpy()
-                    # print(test, test.shape, np.min(test), np.max(test))
-                    # test = (test / 2 + 0.5).clip(0, 1)
-                    # test = (test * 255).round().astype("uint8")
-                    # pil_images = [Image.fromarray(image) for image in test]
-                    # pil_images[0].show()
-
-                if config.vae_path is None:
-                    model_input = model_input.to(weight_dtype)
+                #if config.vae_path is None:
+                #    model_input = model_input.to(weight_dtype)
 
                 # Sample noise that we'll add to the latents
                 noise = torch.randn_like(model_input)
@@ -633,9 +585,7 @@ def main(config: Config):
                         original_size + crops_coords_top_left + target_size
                     )
                     add_time_ids = torch.tensor([add_time_ids])
-                    add_time_ids = add_time_ids.to(
-                        accelerator.device, dtype=weight_dtype
-                    )
+                    add_time_ids = add_time_ids.to(accelerator.device)
                     return add_time_ids
 
                 add_time_ids = torch.cat(
@@ -670,28 +620,30 @@ def main(config: Config):
                     return_dict=False,
                 )[0]
 
-                if config.min_snr is None:
-                    loss = F.mse_loss(
-                        model_pred.float(), noise.float(), reduction="mean"
-                    )
-                else:
-                    # Compute loss-weights as per Section 3.4 of https://arxiv.org/abs/2303.09556.
-                    # Since we predict the noise instead of x_0, the original formulation is slightly changed.
-                    # This is discussed in Section 4.2 of the same paper.
-                    snr = compute_snr(noise_scheduler, timesteps)
-                    mse_loss_weights = torch.stack(
-                        [snr, config.min_snr * torch.ones_like(timesteps)], dim=1
-                    ).min(dim=1)[0]
-                    mse_loss_weights = mse_loss_weights / snr
+                with accelerator.autocast():
+                    if config.min_snr is None:
+                        loss = F.mse_loss(
+                            #model_pred.float(), noise.float(), reduction="mean"
+                            model_pred, noise, reduction="mean"
+                        )
+                    else:
+                        # Compute loss-weights as per Section 3.4 of https://arxiv.org/abs/2303.09556.
+                        # Since we predict the noise instead of x_0, the original formulation is slightly changed.
+                        # This is discussed in Section 4.2 of the same paper.
+                        snr = compute_snr(noise_scheduler, timesteps)
+                        mse_loss_weights = torch.stack(
+                            [snr, config.min_snr * torch.ones_like(timesteps)], dim=1
+                        ).min(dim=1)[0]
+                        mse_loss_weights = mse_loss_weights / snr
 
-                    loss = F.mse_loss(
-                        model_pred.float(), noise.float(), reduction="none"
-                    )
-                    loss = (
-                        loss.mean(dim=list(range(1, len(loss.shape))))
-                        * mse_loss_weights
-                    )
-                    loss = loss.mean()
+                        loss = F.mse_loss(
+                            model_pred.float(), noise.float(), reduction="none"
+                        )
+                        loss = (
+                            loss.mean(dim=list(range(1, len(loss.shape))))
+                            * mse_loss_weights
+                        )
+                        loss = loss.mean()
 
                 # Gather the losses across all processes for logging (if we use distributed training).
                 avg_loss = accelerator.gather(
@@ -721,11 +673,8 @@ def main(config: Config):
 
                 if accelerator.is_main_process:
                     if config.save_steps and global_step % config.save_steps == 0:
-                        save_path = os.path.join(
-                            output_dir, f"checkpoint-{global_step}"
-                        )
-                        accelerator.save_state(save_path)
-                        logger.info(f"Saved state to {save_path}")
+                        save_lora_weights(output_dir, f"checkpoint-{global_step}", unet=unet, text_encoder=text_encoder, text_encoder_2=text_encoder_2)
+                        #logger.info(f"Saved state to {save_path}")
 
             logs = {
                 "step_loss": loss.detach().item(),
@@ -842,56 +791,6 @@ def main(config: Config):
         del text_encoder_lora_layers
         del text_encoder_2_lora_layers
         torch.cuda.empty_cache()
-
-        # Final inference
-        # Make sure vae.dtype is consistent with the unet.dtype
-        # if args.mixed_precision == "fp16":
-        #     vae.to(weight_dtype)
-        # # Load previous pipeline
-        # pipeline = StableDiffusionXLPipeline.from_pretrained(
-        #     args.pretrained_model_name_or_path,
-        #     vae=vae,
-        #     revision=args.revision,
-        #     variant=args.variant,
-        #     torch_dtype=weight_dtype,
-        # )
-        # pipeline = pipeline.to(accelerator.device)
-
-        # # load attention processors
-        # pipeline.load_lora_weights(args.output_dir)
-
-        # # run inference
-        # images = []
-        # if args.validation_prompt and args.num_validation_images > 0:
-        #     generator = (
-        #         torch.Generator(device=accelerator.device).manual_seed(args.seed)
-        #         if args.seed
-        #         else None
-        #     )
-        #     images = [
-        #         pipeline(
-        #             args.validation_prompt, num_inference_steps=25, generator=generator
-        #         ).images[0]
-        #         for _ in range(args.num_validation_images)
-        #     ]
-
-        #     for tracker in accelerator.trackers:
-        #         if tracker.name == "tensorboard":
-        #             np_images = np.stack([np.asarray(img) for img in images])
-        #             tracker.writer.add_images(
-        #                 "test", np_images, epoch, dataformats="NHWC"
-        #             )
-        #         if tracker.name == "wandb":
-        #             tracker.log(
-        #                 {
-        #                     "test": [
-        #                         wandb.Image(
-        #                             image, caption=f"{i}: {args.validation_prompt}"
-        #                         )
-        #                         for i, image in enumerate(images)
-        #                     ]
-        #                 }
-        #             )
 
     accelerator.end_training()
 

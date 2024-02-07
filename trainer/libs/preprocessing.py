@@ -8,17 +8,18 @@ from PIL import Image
 from PIL.Image import Resampling
 import os
 
+# Height, Width
 SDXL_GRID = [
     # (512, 2048), # 4
     # (512, 1984),
     # (512, 1920),
     # (512, 1856),
     # (576, 1792),
-    # (576, 1728), # 3
-    # (576, 1664),
-    # (640, 1600),
-    # (640, 1536),
-    # (704, 1472),
+    (576, 1728), # 3
+    (576, 1664),
+    (640, 1600),
+    (640, 1536),
+    (704, 1472),
     (704, 1408),  # 2
     (704, 1344),
     (768, 1344),
@@ -51,7 +52,7 @@ SDXL_GRID = [
     # (1984, 512),
     # (2048, 512) # 4
 ]
-SDXL_GRID_RATIO = [x / y for (x, y) in SDXL_GRID]
+SDXL_GRID_RATIO = [h / w for (h, w) in SDXL_GRID]
 
 
 def find_closest_index(sorted_list, x):
@@ -118,28 +119,26 @@ def load_dataset_local(
 
 
 def get_target_size(image: Image):
-    image_ratio = image.width / image.height
+    image_ratio = image.height / image.width
     target_size_idx = find_closest_index(SDXL_GRID_RATIO, image_ratio)
     target_size = SDXL_GRID[target_size_idx]
     target_ratio = SDXL_GRID_RATIO[target_size_idx]
     if target_ratio <= image_ratio:
-        k = target_size[1] / image.height
-        resize_resolution = (int(k * image.width), target_size[1])
+        k = target_size[1] / image.width
+        resize_resolution = (int(k * image.height), target_size[1])
     else:
-        k = target_size[0] / image.width
-        resize_resolution = (target_size[0], int(k * image.height))
+        k = target_size[0] / image.height
+        resize_resolution = (target_size[0], int(k * image.width))
     return target_size, resize_resolution
-    # w1/h1 < x/y < w2/h2
-    # r1: ky=h1
-    # r2: kx=w2
 
-
-def fit_grid(example):
+def fit_grid(example, downcast_original_sizes=True):
     image = example['image']
     target_size, resize_res = get_target_size(image)
     example["original_sizes"] = tuple([image.height, image.width])
-    example["target_sizes"] = tuple([target_size[1], target_size[0]])
-    example['image'] = image.convert("RGB").resize(resize_res, Image.Resampling.BICUBIC)
+    if image.height > resize_res[0] and image.width > resize_res[1] and downcast_original_sizes:
+        example["original_sizes"] = resize_res
+    example["target_sizes"] = tuple(target_size)
+    example['image'] = image.convert("RGB").resize((resize_res[1], resize_res[0]), Image.Resampling.BICUBIC)
     return example
 
 def cache_vae_fn(example, vae, device):
@@ -157,7 +156,7 @@ def cache_vae_fn(example, vae, device):
     crop_left = max(
         0, int(round((example['image'].width - example["target_sizes"][1]) / 2.0))
     )
-    example["crop_top_lefts"] = tuple([crop_top, crop_left])
+    example["crop_top_lefts"] = [crop_top, crop_left]
     pixel_values = tfs(example["image"].convert("RGB")).unsqueeze(dim=0)
     latent_dist = vae.encode(pixel_values.to(device)).latent_dist
     example["latent_values"] = latent_dist.parameters
@@ -186,10 +185,10 @@ def collate_fn(examples):
 def setup_dataset(ds: Dataset):
     ds = ds.filter(
         lambda item: SDXL_GRID_RATIO[0]
-        <= item["image"].size[0] / item["image"].size[1]
+        <= item["image"].height / item["image"].width
         <= SDXL_GRID_RATIO[-1]
     )
-    ds = ds.map(fit_grid)
+    ds = ds.map(fit_grid, keep_in_memory=True)
     return ds
 
 def get_buckets(ds: Dataset):
@@ -228,27 +227,25 @@ def setup_dataset_transform(
         if not vae:
             pixel_values = []
             crop_top_lefts = []
-            for image in examples["image"]:
+            for idx, image in enumerate(examples['image']):
                 composer = []  # default_composer
-                target_size = examples["target_sizes"]
+                target_size = examples["target_sizes"][idx]
                 if random_flip:
                     # flip
                     composer = [transforms.RandomHorizontalFlip()] + composer
                 if not random_crop:
-                    composer = [transforms.CenterCrop(examples["target_sizes"])] + composer
+                    composer = [transforms.CenterCrop(target_size)] + composer
                     crop_top = max(
                         0, int(round((image.height - target_size[0]) / 2.0))
                     )
                     crop_left = max(
                         0, int(round((image.width - target_size[1]) / 2.0))
                     )
-                    crop_top_left = tuple([crop_top, crop_left])
+                    crop_top_left = [crop_top, crop_left]
                 else:
                     transforms_random_crop = transforms.RandomCrop(target_size)
                     crop_dict = transforms_random_crop.get_params(image, target_size)
-                    # print(image.width, image.height, target_size)
-                    # print(crop_dict)
-                    crop_top_left = tuple([crop_dict[0], crop_dict[1]])
+                    crop_top_left = [crop_dict[0], crop_dict[1]]
                     composer = [transforms_random_crop] + composer
                 crop_top_lefts.append(crop_top_left)
                 image = transforms.Compose(composer)(image)
@@ -278,7 +275,6 @@ def setup_dataset_transform(
             ds = ds.map(cache_vae_fn, fn_kwargs={"vae": vae, "device": accelerator.device}, keep_in_memory =True, load_from_cache_file=False)
         torch.cuda.empty_cache()
     ds = ds.with_transform(_transform_dataset)
-
     return ds
 
 
