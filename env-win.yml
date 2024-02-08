@@ -20,5 +20,5 @@ dependencies:
   - fastapi
   - pip:
       - https://github.com/jakaline-dev/bitsandbytes_win/releases/download/0.42.0/bitsandbytes-0.42.0-cp311-cp311-win_amd64.whl#egg=bitsandbytes
-      #- xformers==0.0.24
-      #- https://github.com/jakaline-dev/Triton_win/releases/download/3.0.0/triton-3.0.0-cp311-cp311-win_amd64.whl#egg=triton
+      - https://github.com/jakaline-dev/Triton_win/releases/download/3.0.0/triton-3.0.0-cp311-cp311-win_amd64.whl#egg=triton
+      - https://download.pytorch.org/whl/cu121/xformers-0.0.23.post1-cp311-cp311-win_amd64.whl#egg=xformers

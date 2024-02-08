@@ -15,145 +15,49 @@
 # limitations under the License.
 """Fine-tuning script for Stable Diffusion XL for text2image with support for LoRA."""
 
+import itertools
+import json
 import logging
 import math
 import os
-import random
-import shutil
-import itertools
+from datetime import datetime
 from pathlib import Path
-from torchvision.transforms import v2 as transforms
 
 import datasets
-import numpy as np
+import diffusers
 import torch
 import torch.nn.functional as F
 import torch.utils.checkpoint
 import transformers
 from accelerate import Accelerator
-from accelerate.logging import get_logger
 from accelerate.utils import (
     DistributedDataParallelKwargs,
     ProjectConfiguration,
     set_seed,
 )
-from packaging import version
-from peft import LoraConfig, set_peft_model_state_dict
-from peft.utils import get_peft_model_state_dict
-from tqdm.auto import tqdm
-from transformers import (
-    CLIPTokenizer,
-    CLIPTextModel,
-    CLIPTextModelWithProjection,
-)
-
-import diffusers
-from diffusers import (
-    AutoencoderKL,
-    DDPMScheduler,
-    UNet2DConditionModel,
-)
+from config import Config
+from diffusers import AutoencoderKL, DDPMScheduler, UNet2DConditionModel
 from diffusers.loaders import LoraLoaderMixin
+from diffusers.models.autoencoders.vae import DiagonalGaussianDistribution
 from diffusers.optimization import get_scheduler
 from diffusers.training_utils import (
     _set_state_dict_into_text_encoder,
     cast_training_params,
     compute_snr,
 )
-from diffusers.utils import (
-    convert_state_dict_to_diffusers,
-    convert_unet_state_dict_to_peft,
-    is_wandb_available,
-)
+from diffusers.utils import convert_unet_state_dict_to_peft, is_wandb_available
 from diffusers.utils.import_utils import is_xformers_available
 from diffusers.utils.torch_utils import is_compiled_module
-from diffusers.models.autoencoders.vae import DiagonalGaussianDistribution
-from config import Config
-from datetime import datetime
+from libs.data import MoruDataLoader, MoruDataset
 from libs.load_checkpoint import load_sdxl_ckpt
-from libs.preprocessing import load_dataset_local, get_buckets, setup_dataset, cache_vae, setup_dataloader
-from libs.save_model_hook import save_lora_weights
+from libs.preprocessing import tokenize_prompt
 from libs.sample import sample
+from libs.save_model_hook import save_lora_weights
 from optimizers import AnyPrecisionAdamW
-from pydantic import BaseModel, ValidationError
-import json
-from PIL import Image
-from diffusers.utils.state_dict_utils import convert_state_dict_to_kohya
-from datasets import disable_caching
-disable_caching()
-
-logger = get_logger(__name__)
-
-class MyTransformClass:
-    def __init__(self, config, tokenizer, tokenizer_2):
-        self.config = config
-        self.tokenizer = tokenizer
-        self.tokenizer_2 = tokenizer_2
-
-    def __call__(self, examples):
-        default_composer = [
-            # transforms.ToTensor(),
-            transforms.ToImage(),
-            transforms.ToDtype(torch.float32, scale=True),
-            transforms.Normalize([0.5], [0.5]),
-        ]
-        # image aug
-        if not self.config.cache_vae:
-            pixel_values = []
-            crop_top_lefts = []
-            for idx, image in enumerate(examples['image']):
-                composer = default_composer
-                target_size = examples["target_sizes"][idx]
-                if self.config.dataset.random_flip:
-                    # flip
-                    composer = [transforms.RandomHorizontalFlip()] + composer
-                if not self.config.dataset.random_crop:
-                    composer = [transforms.CenterCrop(target_size)] + composer
-                    crop_top = max(
-                        0, int(round((image.height - target_size[0]) / 2.0))
-                    )
-                    crop_left = max(
-                        0, int(round((image.width - target_size[1]) / 2.0))
-                    )
-                    crop_top_left = [crop_top, crop_left]
-                else:
-                    transforms_random_crop = transforms.RandomCrop(target_size)
-                    crop_dict = transforms_random_crop.get_params(image, target_size)
-                    crop_top_left = [crop_dict[0], crop_dict[1]]
-                    composer = [transforms_random_crop] + composer
-                crop_top_lefts.append(crop_top_left)
-                pixel_values.append(transforms.Compose(composer)(image))
-            examples["crop_top_lefts"] = crop_top_lefts
-            examples["pixel_values"] = pixel_values
-        else:
-            examples["latent_values"] = torch.Tensor(examples['latent_values'])
-        # text
-        captions = []
-        for caption in examples["text"]:
-            if isinstance(caption, str):
-                captions.append(caption)
-            elif isinstance(caption, (list, np.ndarray)):
-                # take a random caption if there are multiple
-                captions.append(random.choice(caption))
-            else:
-                raise ValueError("Caption should contain either strings or lists of strings.")
-        examples["input_ids"] = tokenize_prompt(self.tokenizer, captions)
-        examples["input_ids_2"] = tokenize_prompt(self.tokenizer_2, captions)
-        return examples
-
-def tokenize_prompt(tokenizer, prompt):
-    text_inputs = tokenizer(
-        prompt,
-        padding="max_length",
-        max_length=tokenizer.model_max_length,
-        truncation=True,
-        return_tensors="pt",
-    )
-    text_input_ids = text_inputs.input_ids
-    return text_input_ids
+from tqdm.auto import tqdm
+from transformers import CLIPTextModel, CLIPTextModelWithProjection, CLIPTokenizer
 
 
-# Adapted from pipelines.StableDiffusionXLPipeline.encode_prompt
 def encode_prompt(text_encoders, tokenizers, prompt, text_input_ids_list=None):
     prompt_embeds_list = []
 
@@ -182,6 +86,7 @@ def encode_prompt(text_encoders, tokenizers, prompt, text_input_ids_list=None):
     pooled_prompt_embeds = pooled_prompt_embeds.view(bs_embed, -1)
     return prompt_embeds, pooled_prompt_embeds
 
+
 def main(config: Config):
     if not config.name:
         config.name = datetime.now().strftime("%Y-%m-%d_%H-%M")
@@ -209,7 +114,6 @@ def main(config: Config):
             raise ImportError(
                 "Make sure to install wandb if you want to use it for logging during training."
             )
-        import wandb
 
     # Make one log on every process with the configuration for debugging.
     logging.basicConfig(
@@ -247,14 +151,16 @@ def main(config: Config):
 
     # Load Model
     print("Loading checkpoint...")
-    pipe = load_sdxl_ckpt(config.checkpoint_path, vae_path=config.vae_path) #, dtype=weight_dtype
-    noise_scheduler: DDPMScheduler = DDPMScheduler.from_config(pipe['scheduler_config'])
-    tokenizer: CLIPTokenizer = pipe['tokenizer']
-    tokenizer_2: CLIPTokenizer = pipe['tokenizer_2']
-    text_encoder: CLIPTextModel = pipe['text_encoder']
-    text_encoder_2: CLIPTextModelWithProjection = pipe['text_encoder_2']
-    unet: UNet2DConditionModel = pipe['unet']
-    vae: AutoencoderKL = pipe['vae']
+    pipe = load_sdxl_ckpt(
+        config.checkpoint_path, vae_path=config.vae_path
+    )  # , dtype=weight_dtype
+    noise_scheduler: DDPMScheduler = DDPMScheduler.from_config(pipe["scheduler_config"])
+    tokenizer: CLIPTokenizer = pipe["tokenizer"]
+    tokenizer_2: CLIPTokenizer = pipe["tokenizer_2"]
+    text_encoder: CLIPTextModel = pipe["text_encoder"]
+    text_encoder_2: CLIPTextModelWithProjection = pipe["text_encoder_2"]
+    unet: UNet2DConditionModel = pipe["unet"]
+    vae: AutoencoderKL = pipe["vae"]
 
     # We only train the additional adapter LoRA layers
     vae.requires_grad_(False)
@@ -264,8 +170,11 @@ def main(config: Config):
 
     # Move unet, vae and text_encoder to device and cast to weight_dtype
     # The VAE is in float32 to avoid NaN losses.
-    vae.to(accelerator.device, dtype=weight_dtype if weight_dtype != torch.float16 else torch.float32)
-    unet.to(dtype=weight_dtype) #accelerator.device
+    vae.to(
+        # accelerator.device,
+        dtype=weight_dtype if weight_dtype != torch.float16 else torch.float32,
+    )
+    unet.to(dtype=weight_dtype)  # accelerator.device
     text_encoder.to(dtype=weight_dtype)
     text_encoder_2.to(dtype=weight_dtype)
 
@@ -364,7 +273,7 @@ def main(config: Config):
                 models.extend([text_encoder_two_])
             cast_training_params(models, dtype=torch.float32)
 
-    #accelerator.register_save_state_pre_hook(save_model_hook)
+    # accelerator.register_save_state_pre_hook(save_model_hook)
     accelerator.register_load_state_pre_hook(load_model_hook)
 
     if config.gradient_checkpointing:
@@ -444,32 +353,19 @@ def main(config: Config):
         eps=config.optimizer.eps,
     )
 
-    dataset = load_dataset_local(config.dataset.local_path)
-
-    dataset = setup_dataset(dataset)
+    dataset = MoruDataset(
+        random_crop=config.dataset.random_crop,
+        random_flip=config.dataset.random_flip,
+        tokenizer=tokenizer,
+        tokenizer_2=tokenizer_2,
+    )
+    dataset.load_local_folder(config.dataset.local_path)
     if config.cache_vae:
         with accelerator.autocast():
-            dataset = cache_vae(dataset, vae=vae, device=accelerator.device)
-
-
-
-    print("Get buckets")
-    buckets = get_buckets(dataset)
-
-    with accelerator.main_process_first():
-        print({key: len(value) for key, value in buckets.items()})
-        dataset = setup_dataset_transform(
-            dataset,
-            random_flip=config.dataset.random_flip,
-            random_crop=config.dataset.random_crop,
-            vae=vae if config.cache_vae else None,
-            accelerator=accelerator,
-            tokenizer=tokenizer,
-            tokenizer_2=tokenizer_2
-        )
-        tf = MyTransformClass(config=config, tokenizer=tokenizer, tokenizer_2=tokenizer_2)
-        dataset = dataset.with_transform(tf)
-    dataloader = setup_dataloader(dataset, buckets=list(buckets.values()), seed=config.seed, **config.dataloader.model_dump())
+            dataset.cache_vae(vae=vae, device=accelerator.device)
+    dataloader = MoruDataLoader(
+        dataset, seed=config.seed, **config.dataloader.model_dump()
+    )
 
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
@@ -488,11 +384,11 @@ def main(config: Config):
     )
 
     # Prepare everything with our `accelerator`.
-    #if config.lr_unet > 0:
+    # if config.lr_unet > 0:
     unet = accelerator.prepare_model(unet)
-    #if config.lr_text_encoder > 0:
+    # if config.lr_text_encoder > 0:
     text_encoder = accelerator.prepare_model(text_encoder)
-    #if config.lr_text_encoder_2 > 0:
+    # if config.lr_text_encoder_2 > 0:
     text_encoder_2 = accelerator.prepare_model(text_encoder_2)
 
     (
@@ -504,6 +400,9 @@ def main(config: Config):
         dataloader,
         lr_scheduler,
     )
+
+    if not config.cache_vae:
+        vae.to(device=accelerator.device)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(
@@ -602,13 +501,15 @@ def main(config: Config):
                 with accelerator.autocast():
                     if "latent_values" in batch:
                         model_input = DiagonalGaussianDistribution(
-                            batch["latent_values"]#.to(dtype=vae.dtype)
+                            batch["latent_values"]  # .to(dtype=vae.dtype)
                         ).sample()
                     else:
-                        model_input = vae.encode(batch["pixel_values"]).latent_dist.sample()
+                        model_input = vae.encode(
+                            batch["pixel_values"]
+                        ).latent_dist.sample()
                 model_input = model_input * vae.config.scaling_factor
 
-                #if config.vae_path is None:
+                # if config.vae_path is None:
                 #    model_input = model_input.to(weight_dtype)
 
                 # Sample noise that we'll add to the latents
@@ -681,8 +582,10 @@ def main(config: Config):
                 with accelerator.autocast():
                     if config.min_snr is None:
                         loss = F.mse_loss(
-                            #model_pred.float(), noise.float(), reduction="mean"
-                            model_pred, noise, reduction="mean"
+                            # model_pred.float(), noise.float(), reduction="mean"
+                            model_pred,
+                            noise,
+                            reduction="mean",
                         )
                     else:
                         # Compute loss-weights as per Section 3.4 of https://arxiv.org/abs/2303.09556.
@@ -729,8 +632,22 @@ def main(config: Config):
                 accelerator.log({"train_loss": train_loss}, step=global_step)
                 train_loss = 0.0
 
-                if accelerator.is_main_process and config.save_steps and global_step % config.save_steps == 0:
-                    save_lora_weights(output_dir, f"checkpoint-{global_step}", unet=unet if config.lr_unet > 0 else None, text_encoder=text_encoder if config.lr_text_encoder > 0 else None, text_encoder_2=text_encoder_2 if config.lr_text_encoder_2 > 0 else None)
+                if (
+                    accelerator.is_main_process
+                    and config.save_steps
+                    and global_step % config.save_steps == 0
+                ):
+                    save_lora_weights(
+                        output_dir,
+                        f"checkpoint-{global_step}",
+                        unet=unet if config.lr_unet > 0 else None,
+                        text_encoder=text_encoder
+                        if config.lr_text_encoder > 0
+                        else None,
+                        text_encoder_2=text_encoder_2
+                        if config.lr_text_encoder_2 > 0
+                        else None,
+                    )
 
             logs = {
                 "step_loss": loss.detach().item(),
@@ -742,9 +659,20 @@ def main(config: Config):
                 and config.sample_steps
                 and global_step % config.sample_steps == 0
             ):
-                with accelerator.autocast(), torch.inference_mode():
-                    sample(f"{preview_dir}/{global_step}", config, device=accelerator.device, unet=unwrap_model(unet), text_encoder=unwrap_model(text_encoder), text_encoder_2=unwrap_model(text_encoder_2), vae=vae, tokenizer=tokenizer, tokenizer_2=tokenizer_2, noise_scheduler_config=noise_scheduler.config)
-                torch.cuda.empty_cache()
+                with accelerator.autocast():
+                    sample(
+                        f"{preview_dir}/{global_step}",
+                        config,
+                        device=accelerator.device,
+                        unet=unwrap_model(unet),
+                        text_encoder=unwrap_model(text_encoder),
+                        text_encoder_2=unwrap_model(text_encoder_2),
+                        vae=vae,
+                        tokenizer=tokenizer,
+                        tokenizer_2=tokenizer_2,
+                        noise_scheduler_config=noise_scheduler.config,
+                    )
+
                 if config.lr_unet > 0:
                     unet.train()
                 if config.lr_text_encoder > 0:

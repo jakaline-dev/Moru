@@ -37,15 +37,11 @@ class LRScheduler(BaseModel):
 
 class Dataset(BaseModel):
     local_path: str
-    image_column: str = "image"
-    text_column: str = "text"
-
-    random_crop: bool
-    random_flip: bool
-    # shuffle_tags: bool
+    downcast_original_sizes: bool = True
+    random_crop: bool = False
+    random_flip: bool = False
+    shuffle_tags: bool = False
     # caption_dropout: float
-    # max_chunk: int
-    # min_chunk: int
     # caption_template: List[str]
 
 

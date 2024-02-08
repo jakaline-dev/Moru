@@ -1,8 +1,20 @@
-from diffusers import StableDiffusionXLPipeline, EulerDiscreteScheduler, DPMSolverMultistepScheduler
 import torch
+from diffusers import DPMSolverMultistepScheduler, StableDiffusionXLPipeline
 
-def sample(name, config, device=None, unet = None, text_encoder = None, text_encoder_2 = None, vae = None, tokenizer = None, tokenizer_2 = None, noise_scheduler_config = None):
 
+@torch.inference_mode()
+def sample(
+    name,
+    config,
+    device=None,
+    unet=None,
+    text_encoder=None,
+    text_encoder_2=None,
+    vae=None,
+    tokenizer=None,
+    tokenizer_2=None,
+    noise_scheduler_config=None,
+):
     # noise_scheduler = EulerDiscreteScheduler.from_config(
     #     noise_scheduler_config, timestep_type="linspace", rescale_betas_zero_snr=False, sigma_min=None, sigma_max=None
     # )
@@ -25,15 +37,11 @@ def sample(name, config, device=None, unet = None, text_encoder = None, text_enc
 
     # run inference
     generator = (
-        torch.Generator(device=device).manual_seed(config.seed)
-        if config.seed
-        else None
+        torch.Generator(device=device).manual_seed(config.seed) if config.seed else None
     )
 
     images = [
-        pipeline(
-            **config.sample_pipeline.model_dump(), generator=generator
-        ).images[0]
+        pipeline(**config.sample_pipeline.model_dump(), generator=generator).images[0]
         for _ in range(config.num_sample_images)
     ]
 
@@ -63,3 +71,4 @@ def sample(name, config, device=None, unet = None, text_encoder = None, text_enc
             image.save(f"{name}.png")
     del images
     del pipeline
+    torch.cuda.empty_cache()

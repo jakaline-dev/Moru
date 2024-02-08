@@ -20,5 +20,5 @@ dependencies:
   - pytorch::torchtriton==2.2.0
   - fastapi
   - pip:
-    - xformers==0.0.24
     - bitsandbytes==0.42.0
+    - xformers==0.0.24
