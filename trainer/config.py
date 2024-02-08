@@ -104,7 +104,7 @@ class Config(BaseModel):
     num_sample_images: int = 1
 
     save_strategy: Literal["steps", "epoch", "only_last"] = "steps"
-    save_steps: Optional[Union[int, float]] = 500
+    save_steps: Optional[Union[int, float]] = 200
 
     optimizer: AdamOptimizer
     lr_scheduler: LRScheduler

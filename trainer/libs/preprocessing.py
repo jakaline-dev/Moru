@@ -172,8 +172,6 @@ def collate_fn(examples):
             [example["pixel_values"] for example in examples]
         ).to(memory_format=torch.contiguous_format)  # .float()
     if "latent_values" in examples[0]:
-        #print(examples[0]['latent_values'])
-        #print(type(examples[0]['latent_values']))
         batch["latent_values"] = torch.stack([example["latent_values"] for example in examples])
     batch["original_sizes"] = [example["original_sizes"] for example in examples]
     batch["crop_top_lefts"] = [example["crop_top_lefts"] for example in examples]
@@ -209,13 +207,6 @@ def setup_dataset_transform(
     tokenizer=None,
     tokenizer_2=None
 ):
-    # I1. Resize (Prepare)
-    # I2. Flip (None / Transform)
-    # I3. Dynamic Crop (None / Transform)
-    # I4. Encode (Prepare / Model)
-    # T1. Tokenize (Prepare / Transform)
-    # T2. Encode (Prepare / Model)
-
     def _transform_dataset(examples):
         default_composer = [
             # transforms.ToTensor(),
@@ -228,7 +219,7 @@ def setup_dataset_transform(
             pixel_values = []
             crop_top_lefts = []
             for idx, image in enumerate(examples['image']):
-                composer = []  # default_composer
+                composer = default_composer
                 target_size = examples["target_sizes"][idx]
                 if random_flip:
                     # flip
@@ -248,9 +239,7 @@ def setup_dataset_transform(
                     crop_top_left = [crop_dict[0], crop_dict[1]]
                     composer = [transforms_random_crop] + composer
                 crop_top_lefts.append(crop_top_left)
-                image = transforms.Compose(composer)(image)
-                image = transforms.Compose(default_composer)(image)
-                pixel_values.append(image)
+                pixel_values.append(transforms.Compose(composer)(image))
             examples["crop_top_lefts"] = crop_top_lefts
             examples["pixel_values"] = pixel_values
         else:
@@ -274,30 +263,38 @@ def setup_dataset_transform(
         with accelerator.autocast():
             ds = ds.map(cache_vae_fn, fn_kwargs={"vae": vae, "device": accelerator.device}, keep_in_memory =True, load_from_cache_file=False)
         torch.cuda.empty_cache()
-    ds = ds.with_transform(_transform_dataset)
+    #ds = ds.with_transform(_transform_dataset)
     return ds
 
+def cache_vae(
+    ds: Dataset,
+    vae=None,
+    device=None
+):
+    print("Caching vae outputs...")
+    ds = ds.map(cache_vae_fn, fn_kwargs={"vae": vae, "device": device}, keep_in_memory =True, load_from_cache_file=False)
+    torch.cuda.empty_cache()
+    return ds
 
 class MyBatchSampler(Sampler[list[int]]):
-    def __init__(self, dataset, buckets, batch_size: int = 1, drop_last: bool = False):
+    def __init__(self, dataset, buckets, batch_size: int = 1, drop_last: bool = False, generator=None):
         self.dataset = dataset
         self.batch_size = batch_size
         self.drop_last = drop_last
         self.buckets = buckets
+        self.generator = generator
         self.has_subfolder = False
 
-    # def _groups(self):
-    #     groups = {}
-    #     for idx in range(len(self.dataset)):
-    #         target_size = self.dataset[idx]["target_sizes"]
-    #         if target_size not in groups:
-    #             groups[target_size] = []
-    #         groups[target_size].append(idx)
-    #     return list(groups.values())
-
     def __iter__(self):
-        for k in torch.randperm(len(self.buckets)).tolist():
-            sampler = SubsetRandomSampler(self.buckets[k])
+        if self.generator is None:
+            seed = int(torch.empty((), dtype=torch.int64).random_().item())
+            generator = torch.Generator()
+            generator.manual_seed(seed)
+        else:
+            generator = self.generator
+
+        for k in torch.randperm(len(self.buckets), generator=generator).tolist():
+            sampler = SubsetRandomSampler(self.buckets[k], generator=generator)
             if self.drop_last:
                 sampler_iter = iter(sampler)
                 while True:
@@ -321,23 +318,30 @@ class MyBatchSampler(Sampler[list[int]]):
 
     def __len__(self):
         if self.drop_last:
-            return sum([len(x) // self.batch_size for x in self.buckets])  # type: ignore[arg-type]
+            return sum([len(x) // self.batch_size for x in self.buckets])
         else:
-            return sum([np.ceil(len(x) / self.batch_size) for x in self.buckets])  # type: ignore[arg-type]
+            return sum([np.ceil(len(x) / self.batch_size) for x in self.buckets])
 
 
 def setup_dataloader(
     ds,
     buckets=None,
+    seed=None,
     batch_size: int = 1,
     drop_last: bool = False,
     pin_memory: bool = False,
     num_workers: int = 0,
     persistent_workers: bool = False,
 ):
-    batch_sampler = MyBatchSampler(ds, buckets=buckets, batch_size=batch_size, drop_last=drop_last)
+    if seed:
+        generator = torch.Generator()
+        generator.manual_seed(seed)
+    else:
+        generator = None
+    batch_sampler = MyBatchSampler(ds, buckets=buckets, batch_size=batch_size, drop_last=drop_last, generator=generator)
     return DataLoader(
         ds,
+        sampler=None,
         batch_sampler=batch_sampler,
         collate_fn=collate_fn,
         pin_memory=pin_memory,
@@ -348,12 +352,10 @@ def setup_dataloader(
 
 if __name__ == "__main__":
     print("Load dataset")
-    ds = load_dataset_local("D:/Dataset/jdkd/1_jdkd")
     print("Setup dataset")
     from diffusers.pipelines.stable_diffusion.convert_from_ckpt import (
         download_from_original_stable_diffusion_ckpt,
     )
-
     pipe = download_from_original_stable_diffusion_ckpt(
         "C:/CODE/ComfyUI_windows_portable/ComfyUI/models/checkpoints/sd_xl_base_1.0.safetensors",
         from_safetensors=True,

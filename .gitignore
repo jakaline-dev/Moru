@@ -7,4 +7,5 @@ installer_files
 *.ipynb
 *.safetensors
 .micromamba/
+trainer_runs/
 trainer/config_example.json

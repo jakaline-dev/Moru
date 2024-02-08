@@ -22,6 +22,7 @@ import random
 import shutil
 import itertools
 from pathlib import Path
+from torchvision.transforms import v2 as transforms
 
 import datasets
 import numpy as np
@@ -50,9 +51,7 @@ import diffusers
 from diffusers import (
     AutoencoderKL,
     DDPMScheduler,
-    StableDiffusionXLPipeline,
     UNet2DConditionModel,
-    EulerDiscreteScheduler,
 )
 from diffusers.loaders import LoraLoaderMixin
 from diffusers.optimization import get_scheduler
@@ -72,8 +71,9 @@ from diffusers.models.autoencoders.vae import DiagonalGaussianDistribution
 from config import Config
 from datetime import datetime
 from libs.load_checkpoint import load_sdxl_ckpt
-from libs.preprocessing import load_dataset_local, get_buckets, setup_dataset, setup_dataset_transform, setup_dataloader
+from libs.preprocessing import load_dataset_local, get_buckets, setup_dataset, cache_vae, setup_dataloader
 from libs.save_model_hook import save_lora_weights
+from libs.sample import sample
 from optimizers import AnyPrecisionAdamW
 from pydantic import BaseModel, ValidationError
 import json
@@ -84,6 +84,62 @@ disable_caching()
 
 logger = get_logger(__name__)
 
+class MyTransformClass:
+    def __init__(self, config, tokenizer, tokenizer_2):
+        self.config = config
+        self.tokenizer = tokenizer
+        self.tokenizer_2 = tokenizer_2
+
+    def __call__(self, examples):
+        default_composer = [
+            # transforms.ToTensor(),
+            transforms.ToImage(),
+            transforms.ToDtype(torch.float32, scale=True),
+            transforms.Normalize([0.5], [0.5]),
+        ]
+        # image aug
+        if not self.config.cache_vae:
+            pixel_values = []
+            crop_top_lefts = []
+            for idx, image in enumerate(examples['image']):
+                composer = default_composer
+                target_size = examples["target_sizes"][idx]
+                if self.config.dataset.random_flip:
+                    # flip
+                    composer = [transforms.RandomHorizontalFlip()] + composer
+                if not self.config.dataset.random_crop:
+                    composer = [transforms.CenterCrop(target_size)] + composer
+                    crop_top = max(
+                        0, int(round((image.height - target_size[0]) / 2.0))
+                    )
+                    crop_left = max(
+                        0, int(round((image.width - target_size[1]) / 2.0))
+                    )
+                    crop_top_left = [crop_top, crop_left]
+                else:
+                    transforms_random_crop = transforms.RandomCrop(target_size)
+                    crop_dict = transforms_random_crop.get_params(image, target_size)
+                    crop_top_left = [crop_dict[0], crop_dict[1]]
+                    composer = [transforms_random_crop] + composer
+                crop_top_lefts.append(crop_top_left)
+                pixel_values.append(transforms.Compose(composer)(image))
+            examples["crop_top_lefts"] = crop_top_lefts
+            examples["pixel_values"] = pixel_values
+        else:
+            examples["latent_values"] = torch.Tensor(examples['latent_values'])
+        # text
+        captions = []
+        for caption in examples["text"]:
+            if isinstance(caption, str):
+                captions.append(caption)
+            elif isinstance(caption, (list, np.ndarray)):
+                # take a random caption if there are multiple
+                captions.append(random.choice(caption))
+            else:
+                raise ValueError("Caption should contain either strings or lists of strings.")
+        examples["input_ids"] = tokenize_prompt(self.tokenizer, captions)
+        examples["input_ids_2"] = tokenize_prompt(self.tokenizer_2, captions)
+        return examples
 
 def tokenize_prompt(tokenizer, prompt):
     text_inputs = tokenizer(
@@ -126,10 +182,11 @@ def encode_prompt(text_encoders, tokenizers, prompt, text_input_ids_list=None):
     pooled_prompt_embeds = pooled_prompt_embeds.view(bs_embed, -1)
     return prompt_embeds, pooled_prompt_embeds
 
-
 def main(config: Config):
     if not config.name:
         config.name = datetime.now().strftime("%Y-%m-%d_%H-%M")
+    else:
+        config.name += "_" + datetime.now().strftime("%Y%m%d_%H%M%S")
     project_dir = Path(os.getcwd()).parent / "trainer_runs" / config.name
     logging_dir = project_dir / "logs"
     output_dir = project_dir / "output"
@@ -179,15 +236,6 @@ def main(config: Config):
         os.makedirs(logging_dir, exist_ok=True)
         os.makedirs(output_dir, exist_ok=True)
         os.makedirs(preview_dir, exist_ok=True)
-
-        # if config.accelerator.push_to_hub:
-        #     repo_id = create_repo(
-        #         repo_id=args.hub_model_id or Path(args.output_dir).name,
-        #         exist_ok=True,
-        #         token=args.hub_token,
-        #     ).repo_id
-
-
 
     # For mixed precision training we cast all non-trainable weigths (vae, non-lora text_encoder and non-lora unet) to half-precision
     # as these weights are only used for inference, keeping weights in full precision is not required.
@@ -396,11 +444,19 @@ def main(config: Config):
         eps=config.optimizer.eps,
     )
 
+    dataset = load_dataset_local(config.dataset.local_path)
+
+    dataset = setup_dataset(dataset)
+    if config.cache_vae:
+        with accelerator.autocast():
+            dataset = cache_vae(dataset, vae=vae, device=accelerator.device)
+
+
+
+    print("Get buckets")
+    buckets = get_buckets(dataset)
+
     with accelerator.main_process_first():
-        dataset = load_dataset_local(config.dataset.local_path)
-        dataset = setup_dataset(dataset)
-        print("Get buckets")
-        buckets = get_buckets(dataset)
         print({key: len(value) for key, value in buckets.items()})
         dataset = setup_dataset_transform(
             dataset,
@@ -411,7 +467,9 @@ def main(config: Config):
             tokenizer=tokenizer,
             tokenizer_2=tokenizer_2
         )
-    dataloader = setup_dataloader(dataset, buckets=list(buckets.values()), **config.dataloader.model_dump())
+        tf = MyTransformClass(config=config, tokenizer=tokenizer, tokenizer_2=tokenizer_2)
+        dataset = dataset.with_transform(tf)
+    dataloader = setup_dataloader(dataset, buckets=list(buckets.values()), seed=config.seed, **config.dataloader.model_dump())
 
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
@@ -430,18 +488,18 @@ def main(config: Config):
     )
 
     # Prepare everything with our `accelerator`.
-    print("prepare...")
+    #if config.lr_unet > 0:
+    unet = accelerator.prepare_model(unet)
+    #if config.lr_text_encoder > 0:
+    text_encoder = accelerator.prepare_model(text_encoder)
+    #if config.lr_text_encoder_2 > 0:
+    text_encoder_2 = accelerator.prepare_model(text_encoder_2)
+
     (
-        unet,
-        text_encoder,
-        text_encoder_2,
         optimizer,
         dataloader,
         lr_scheduler,
     ) = accelerator.prepare(
-        unet,
-        text_encoder,
-        text_encoder_2,
         optimizer,
         dataloader,
         lr_scheduler,
@@ -671,10 +729,8 @@ def main(config: Config):
                 accelerator.log({"train_loss": train_loss}, step=global_step)
                 train_loss = 0.0
 
-                if accelerator.is_main_process:
-                    if config.save_steps and global_step % config.save_steps == 0:
-                        save_lora_weights(output_dir, f"checkpoint-{global_step}", unet=unet, text_encoder=text_encoder, text_encoder_2=text_encoder_2)
-                        #logger.info(f"Saved state to {save_path}")
+                if accelerator.is_main_process and config.save_steps and global_step % config.save_steps == 0:
+                    save_lora_weights(output_dir, f"checkpoint-{global_step}", unet=unet if config.lr_unet > 0 else None, text_encoder=text_encoder if config.lr_text_encoder > 0 else None, text_encoder_2=text_encoder_2 if config.lr_text_encoder_2 > 0 else None)
 
             logs = {
                 "step_loss": loss.detach().item(),
@@ -687,59 +743,7 @@ def main(config: Config):
                 and global_step % config.sample_steps == 0
             ):
                 with accelerator.autocast(), torch.inference_mode():
-                    logger.info("Sample images...")
-                    # create pipeline
-                    pipeline = StableDiffusionXLPipeline(
-                        tokenizer=tokenizer,
-                        tokenizer_2=tokenizer_2,
-                        scheduler=EulerDiscreteScheduler.from_config(
-                            noise_scheduler.config
-                        ),
-                        vae=vae,
-                        text_encoder=unwrap_model(text_encoder),
-                        text_encoder_2=unwrap_model(text_encoder_2),
-                        unet=unwrap_model(unet),
-                    )
-
-                    pipeline = pipeline.to(accelerator.device)
-                    pipeline.set_progress_bar_config(disable=True)
-
-                    # run inference
-                    generator = (
-                        torch.Generator(device=accelerator.device).manual_seed(config.seed)
-                        if config.seed
-                        else None
-                    )
-
-                    images = [
-                        pipeline(
-                            **config.sample_pipeline.model_dump(), generator=generator
-                        ).images[0]
-                        for _ in range(config.num_sample_images)
-                    ]
-
-                    for tracker in accelerator.trackers:
-                        if tracker.name == "tensorboard":
-                            np_images = np.stack([np.asarray(img) for img in images])
-                            tracker.writer.add_images(
-                                "validation", np_images, epoch, dataformats="NHWC"
-                            )
-                        if tracker.name == "wandb":
-                            tracker.log(
-                                {
-                                    "validation": [
-                                        wandb.Image(
-                                            image,
-                                            caption=f"{i}: {config.sample_pipeline.prompt}",
-                                        )
-                                        for i, image in enumerate(images)
-                                    ]
-                                }
-                            )
-                    for i, image in enumerate(images):
-                        image.save(f"{preview_dir}/{global_step}_{i}.png")
-                    del images
-                    del pipeline
+                    sample(f"{preview_dir}/{global_step}", config, device=accelerator.device, unet=unwrap_model(unet), text_encoder=unwrap_model(text_encoder), text_encoder_2=unwrap_model(text_encoder_2), vae=vae, tokenizer=tokenizer, tokenizer_2=tokenizer_2, noise_scheduler_config=noise_scheduler.config)
                 torch.cuda.empty_cache()
                 if config.lr_unet > 0:
                     unet.train()
@@ -753,44 +757,44 @@ def main(config: Config):
 
     # Save the lora layers
     accelerator.wait_for_everyone()
-    if accelerator.is_main_process:
-        if config.lr_unet > 0:
-            unet = unwrap_model(unet)
-            unet_lora_state_dict = convert_state_dict_to_diffusers(
-                get_peft_model_state_dict(unet)
-            )
-        else:
-            unet_lora_state_dict = None
+    # if accelerator.is_main_process:
+    #     if config.lr_unet > 0:
+    #         unet = unwrap_model(unet)
+    #         unet_lora_state_dict = convert_state_dict_to_diffusers(
+    #             get_peft_model_state_dict(unet)
+    #         )
+    #     else:
+    #         unet_lora_state_dict = None
 
-        if config.lr_text_encoder > 0:
-            text_encoder = unwrap_model(text_encoder)
-            text_encoder_lora_layers = convert_state_dict_to_diffusers(
-                get_peft_model_state_dict(text_encoder)
-            )
-        else:
-            text_encoder_lora_layers = None
+    #     if config.lr_text_encoder > 0:
+    #         text_encoder = unwrap_model(text_encoder)
+    #         text_encoder_lora_layers = convert_state_dict_to_diffusers(
+    #             get_peft_model_state_dict(text_encoder)
+    #         )
+    #     else:
+    #         text_encoder_lora_layers = None
 
-        if config.lr_text_encoder_2 > 0:
-            text_encoder_2 = unwrap_model(text_encoder_2)
-            text_encoder_2_lora_layers = convert_state_dict_to_diffusers(
-                get_peft_model_state_dict(text_encoder_2)
-            )
-        else:
-            text_encoder_2_lora_layers = None
+    #     if config.lr_text_encoder_2 > 0:
+    #         text_encoder_2 = unwrap_model(text_encoder_2)
+    #         text_encoder_2_lora_layers = convert_state_dict_to_diffusers(
+    #             get_peft_model_state_dict(text_encoder_2)
+    #         )
+    #     else:
+    #         text_encoder_2_lora_layers = None
 
-        StableDiffusionXLPipeline.save_lora_weights(
-            save_directory=output_dir,
-            unet_lora_layers=unet_lora_state_dict,
-            text_encoder_lora_layers=text_encoder_lora_layers,
-            text_encoder_2_lora_layers=text_encoder_2_lora_layers,
-        )
+    #     StableDiffusionXLPipeline.save_lora_weights(
+    #         save_directory=output_dir,
+    #         unet_lora_layers=unet_lora_state_dict,
+    #         text_encoder_lora_layers=text_encoder_lora_layers,
+    #         text_encoder_2_lora_layers=text_encoder_2_lora_layers,
+    #     )
 
-        del unet
-        del text_encoder
-        del text_encoder_2
-        del text_encoder_lora_layers
-        del text_encoder_2_lora_layers
-        torch.cuda.empty_cache()
+    #     del unet
+    #     del text_encoder
+    #     del text_encoder_2
+    #     del text_encoder_lora_layers
+    #     del text_encoder_2_lora_layers
+    #     torch.cuda.empty_cache()
 
     accelerator.end_training()
 
