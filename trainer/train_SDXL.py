@@ -30,6 +30,7 @@ import torch.nn.functional as F
 import torch.utils.checkpoint
 import transformers
 from accelerate import Accelerator
+from accelerate.logging import get_logger
 from accelerate.utils import (
     DistributedDataParallelKwargs,
     ProjectConfiguration,
@@ -54,6 +55,9 @@ from libs.preprocessing import tokenize_prompt
 from libs.sample import sample
 from libs.save_model_hook import save_lora_weights
 from optimizers import AnyPrecisionAdamW
+from packaging import version
+from peft import LoraConfig, set_peft_model_state_dict
+from pydantic import ValidationError
 from tqdm.auto import tqdm
 from transformers import CLIPTextModel, CLIPTextModelWithProjection, CLIPTokenizer
 
@@ -85,6 +89,9 @@ def encode_prompt(text_encoders, tokenizers, prompt, text_input_ids_list=None):
     prompt_embeds = torch.concat(prompt_embeds_list, dim=-1)
     pooled_prompt_embeds = pooled_prompt_embeds.view(bs_embed, -1)
     return prompt_embeds, pooled_prompt_embeds
+
+
+logger = get_logger(__name__)
 
 
 def main(config: Config):

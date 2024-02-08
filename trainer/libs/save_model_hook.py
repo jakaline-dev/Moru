@@ -16,7 +16,6 @@ def save_lora_weights(
     state_dict = {}
 
     def pack_weights(layers, prefix):
-        # print("BOOL!", isinstance(layers, torch.nn.Module))
         layers_weights = (
             layers.state_dict() if isinstance(layers, torch.nn.Module) else layers
         )
