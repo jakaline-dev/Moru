@@ -1,27 +1,13 @@
-import os
 import random
 
 import numpy as np
 import torch
-from PIL import Image
 from torch.utils.data import DataLoader, Dataset, Sampler, SubsetRandomSampler
 from torchvision.transforms import v2 as transforms
 from tqdm.auto import tqdm
 from transformers import CLIPTokenizer
 
-from .preprocessing import get_target_size
-
-
-def tokenize_prompt(tokenizer, prompt):
-    text_inputs = tokenizer(
-        prompt,
-        padding="max_length",
-        max_length=tokenizer.model_max_length,
-        truncation=True,
-        return_tensors="pt",
-    )
-    text_input_ids = text_inputs.input_ids
-    return text_input_ids
+from .preprocessing import load_from_local, pad_input_ids
 
 
 class MoruDataset(Dataset):
@@ -42,57 +28,8 @@ class MoruDataset(Dataset):
         self.tokenizer = tokenizer
         self.tokenizer_2 = tokenizer_2
 
-    def load_local_folder(self, folder_path: str):
-        self.data = []
-        print("Load local folder")
-        for filename in tqdm(os.listdir(folder_path)):
-            try:
-                image_path = os.path.join(folder_path, filename)
-                if (
-                    not os.path.isfile(image_path)
-                    or os.path.splitext(filename)[1] == ".txt"
-                ):
-                    continue
-                image = Image.open(image_path)
-                # pre-resize
-                target_sizes, resize_res = get_target_size(image)
-                if not (image.height == resize_res[0] and image.width == resize_res[1]):
-                    image = image.resize(resize_res, Image.Resampling.BICUBIC)
-                # if image.mode == "RGBA":
-                #     # No transparency allowed in PNGs - change alpha to white
-                #     white_background = Image.new("RGB", image.size, (255, 255, 255))
-                #     white_background.paste(image, (0, 0), mask=image.split()[3])
-                #     image = white_background
-                image = image.convert("RGB")
-
-                base_name = os.path.splitext(filename)[0]
-                text_path = os.path.join(folder_path, base_name + ".txt")
-                if not os.path.isfile(text_path):
-                    continue
-                text = open(text_path, "r").read().strip().splitlines()
-                if len(text) == 1:
-                    text = text[0]
-
-                if (
-                    image.height > resize_res[0]
-                    and image.width > resize_res[1]
-                    and self.downcast_original_sizes
-                ):
-                    original_sizes = resize_res
-                else:
-                    original_sizes = tuple([image.height, image.width])
-
-                self.data.append(
-                    {
-                        "image": image,
-                        "text": text,
-                        "target_sizes": target_sizes,
-                        "original_sizes": original_sizes,
-                    }
-                )
-
-            except Exception as e:
-                print(e)
+    def load_data(self, local_path: str = None):
+        self.data = load_from_local(local_path)
         # buckets
         buckets = {}
         for idx, item in enumerate(self.data):
@@ -171,9 +108,9 @@ class MoruDataset(Dataset):
                 entry["crop_top_lefts"] = tuple([crop_top, crop_left])
             entry["pixel_values"] = transforms.Compose(tfs)(entry["image"])
 
-        if "text_embeddings" in entry:
+        if "emb_prompt" in entry:
             pass
-        elif "input_ids" in entry:
+        elif "input_ids_prompt" in entry:
             pass
             # if len(entry["input_ids"].shape) > 1:
             #     entry["input_ids"] = random.choice(entry["input_ids"])
@@ -182,15 +119,19 @@ class MoruDataset(Dataset):
                 caption = entry["text"]
             elif isinstance(entry["text"], (list, np.ndarray)):
                 # take a random caption if there are multiple
-                caption.append(random.choice(entry["text"]))
+                caption = random.choice(entry["text"])
             else:
                 raise ValueError(
                     "Caption should contain either strings or lists of strings."
                 )
             if self.shuffle_tags:
-                pass
-            entry["input_ids"] = tokenize_prompt(self.tokenizer, caption)
-            entry["input_ids_2"] = tokenize_prompt(self.tokenizer_2, caption)
+                tags = caption.split(",")
+                random.shuffle(tags)
+                caption = ", ".join(tags)
+            output_nonpooled = self.tokenizer(caption, return_tensors="pt")
+            # output_pooled = self.tokenizer(caption, return_tensors="pt")
+            entry["input_ids_prompt"] = output_nonpooled.input_ids
+            # entry["input_ids_pooled"] = output_pooled.input_ids
         return entry
 
 
@@ -255,8 +196,16 @@ def MoruCollateFn(examples):
     batch["original_sizes"] = [example["original_sizes"] for example in examples]
     batch["crop_top_lefts"] = [example["crop_top_lefts"] for example in examples]
     batch["target_sizes"] = [example["target_sizes"] for example in examples]
-    batch["input_ids"] = torch.stack([example["input_ids"] for example in examples])
-    batch["input_ids_2"] = torch.stack([example["input_ids_2"] for example in examples])
+
+    # batch["input_ids"] = torch.stack([example["input_ids"] for example in examples])
+    # batch["input_ids_2"] = torch.stack([example["input_ids_2"] for example in examples])
+    batch["input_ids_prompt"] = pad_input_ids(
+        [example["input_ids_prompt"] for example in examples]
+    )
+    if "input_ids_pooled" in examples[0]:
+        batch["input_ids_pooled"] = pad_input_ids(
+            [example["input_ids_pooled"] for example in examples]
+        )
     return batch
 
 

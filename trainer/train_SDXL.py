@@ -51,7 +51,7 @@ from diffusers.utils.import_utils import is_xformers_available
 from diffusers.utils.torch_utils import is_compiled_module
 from libs.data import MoruDataLoader, MoruDataset
 from libs.load_checkpoint import load_sdxl_ckpt
-from libs.preprocessing import tokenize_prompt
+from libs.preprocessing import encode_prompt
 from libs.sample import sample
 from libs.save_model_hook import save_lora_weights
 from optimizers import AnyPrecisionAdamW
@@ -60,36 +60,6 @@ from peft import LoraConfig, set_peft_model_state_dict
 from pydantic import ValidationError
 from tqdm.auto import tqdm
 from transformers import CLIPTextModel, CLIPTextModelWithProjection, CLIPTokenizer
-
-
-def encode_prompt(text_encoders, tokenizers, prompt, text_input_ids_list=None):
-    prompt_embeds_list = []
-
-    for i, text_encoder in enumerate(text_encoders):
-        if tokenizers is not None:
-            tokenizer = tokenizers[i]
-            text_input_ids = tokenize_prompt(tokenizer, prompt)
-        else:
-            assert text_input_ids_list is not None
-            text_input_ids = text_input_ids_list[i]
-
-        prompt_embeds = text_encoder(
-            text_input_ids.to(text_encoder.device),
-            output_hidden_states=True,
-            return_dict=False,
-        )
-
-        # We are only ALWAYS interested in the pooled output of the final text encoder
-        pooled_prompt_embeds = prompt_embeds[0]
-        prompt_embeds = prompt_embeds[-1][-2]
-        bs_embed, seq_len, _ = prompt_embeds.shape
-        prompt_embeds = prompt_embeds.view(bs_embed, seq_len, -1)
-        prompt_embeds_list.append(prompt_embeds)
-
-    prompt_embeds = torch.concat(prompt_embeds_list, dim=-1)
-    pooled_prompt_embeds = pooled_prompt_embeds.view(bs_embed, -1)
-    return prompt_embeds, pooled_prompt_embeds
-
 
 logger = get_logger(__name__)
 
@@ -308,7 +278,7 @@ def main(config: Config):
     #     )
 
     # Make sure the trainable params are in float32.
-    if config.accelerator.mixed_precision == "fp16":
+    if config.accelerator.mixed_precision != "no" and not config.no_mixed_precision:
         models = []
         if config.lr_unet > 0:
             models.extend([unet])
@@ -366,7 +336,7 @@ def main(config: Config):
         tokenizer=tokenizer,
         tokenizer_2=tokenizer_2,
     )
-    dataset.load_local_folder(config.dataset.local_path)
+    dataset.load_data(local_path=config.dataset.local_path)
     if config.cache_vae:
         with accelerator.autocast():
             dataset.cache_vae(vae=vae, device=accelerator.device)
@@ -566,17 +536,15 @@ def main(config: Config):
                 )
 
                 # Predict the noise residual
-                unet_added_conditions = {"time_ids": add_time_ids}
                 prompt_embeds, pooled_prompt_embeds = encode_prompt(
                     text_encoders=[text_encoder, text_encoder_2],
-                    tokenizers=None,
-                    prompt=None,
-                    text_input_ids_list=[
-                        batch["input_ids"],
-                        batch["input_ids_2"],
-                    ],
+                    input_ids_prompt=batch["input_ids_prompt"],
                 )
-                unet_added_conditions.update({"text_embeds": pooled_prompt_embeds})
+
+                unet_added_conditions = {
+                    "time_ids": add_time_ids,
+                    "text_embeds": pooled_prompt_embeds,
+                }
 
                 model_pred = unet(
                     noisy_model_input,

@@ -1,5 +1,6 @@
+from typing import List, Literal, Optional, Union
+
 from pydantic import BaseModel
-from typing import Optional, List, Literal, Union
 
 
 class Fabric(BaseModel):
@@ -86,6 +87,7 @@ class Config(BaseModel):
     # fabric: Fabric
     accelerator: Accelerator
     seed: int
+    no_mixed_precision: bool = False
 
     gradient_checkpointing: bool = False
     gradient_accumulation_steps: int = 1
